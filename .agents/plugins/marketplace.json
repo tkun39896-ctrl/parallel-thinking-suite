@@ -1,7 +1,7 @@
 {
-  "name": "personal",
+  "name": "parallel-thinking-local",
   "interface": {
-    "displayName": "Personal"
+    "displayName": "Parallel Thinking Local"
   },
   "plugins": [
     {

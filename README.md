@@ -30,7 +30,7 @@ API 密钥只由本地服务从服务端环境或系统凭据存储解析。支�
 
 ```powershell
 codex plugin marketplace add .
-codex plugin add parallel-thinking-suite@personal
+codex plugin add parallel-thinking-suite@parallel-thinking-local
 ```
 
 新建一个 Codex 任务后，可使用“并行思考”和“聚合答案”两个中文 Skill。
