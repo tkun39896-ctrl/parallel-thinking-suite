@@ -1,0 +1,4 @@
+interface:
+  display_name: "并行思考开发生命周期"
+  short_description: "为并行思考插件执行安全的开发、测试、构建与生产验收"
+  default_prompt: "Use $parallel-thinking-development to implement and verify this Parallel Thinking Suite change."

@@ -1,7 +1,7 @@
 parallelThinking:
   displayName: "技术可行性分析"
   enabled: true
-  provider: deepseek
+  provider: openrouter
   role: worker
   selection:
     includeInParallel: true

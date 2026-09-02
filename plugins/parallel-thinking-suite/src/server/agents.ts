@@ -20,7 +20,7 @@ import {
 import type { AgentDraft, AgentExtension, AgentSummary, ProviderId } from "../shared/types.js";
 import { ensureGlobalHome } from "./config.js";
 
-const providers = new Set<ProviderId>(["openai", "anthropic", "deepseek"]);
+const providers = new Set<ProviderId>(["openai", "anthropic", "deepseek", "openrouter"]);
 const contextModes = new Set(["summary", "prompt-only", "full"]);
 
 function defaultExtension(id: string): AgentExtension {
@@ -28,6 +28,7 @@ function defaultExtension(id: string): AgentExtension {
     displayName: id,
     enabled: true,
     provider: "openai",
+    avatar: { kind: "provider", provider: "openai" },
     role: "worker",
     selection: {
       includeInParallel: true,
@@ -71,7 +72,14 @@ export function validateParallelThinkingExtension(
     issues.push({ code: "E_PT_DISPLAY_NAME", message: "displayName is required", level: "error", path: "parallelThinking.displayName" });
   }
   if (!providers.has(ext.provider as ProviderId)) {
-    issues.push({ code: "E_PT_PROVIDER", message: "provider must be openai, anthropic, or deepseek", level: "error", path: "parallelThinking.provider" });
+    issues.push({ code: "E_PT_PROVIDER", message: "provider must be openai, anthropic, deepseek, or openrouter", level: "error", path: "parallelThinking.provider" });
+  }
+  const avatar = ext.avatar as Record<string, unknown> | undefined;
+  if (avatar !== undefined && (avatar.kind !== "provider" || !providers.has(avatar.provider as ProviderId))) {
+    issues.push({ code: "E_PT_AVATAR", message: "avatar must reference a supported provider", level: "error", path: "parallelThinking.avatar" });
+  }
+  if (ext.modelId !== undefined && (typeof ext.modelId !== "string" || !/^[a-z0-9-]+$/.test(ext.modelId))) {
+    issues.push({ code: "E_PT_MODEL_ID", message: "modelId must be kebab-case", level: "error", path: "parallelThinking.modelId" });
   }
   if (ext.role !== "worker" && ext.role !== "synthesizer") {
     issues.push({ code: "E_PT_ROLE", message: "role must be worker or synthesizer", level: "error", path: "parallelThinking.role" });
@@ -96,9 +104,12 @@ export function validateParallelThinkingExtension(
 function normalizeExtension(doc: RichAgentDocument): AgentExtension {
   const raw = doc.extensions.parallelThinking as Partial<AgentExtension> | undefined;
   const base = defaultExtension(doc.frontmatter.name);
+  const provider = raw?.provider || base.provider;
   return {
     ...base,
     ...raw,
+    provider,
+    avatar: raw?.avatar || { kind: "provider", provider },
     selection: { ...base.selection, ...raw?.selection },
     knowledge: { ...base.knowledge, ...raw?.knowledge },
     context: { ...base.context, ...raw?.context },
@@ -175,6 +186,7 @@ export class AgentDefinitionRepository {
 
   saveAgent(draft: AgentDraft): AgentSummary {
     const id = this.validateId(draft.id);
+    const profile = !draft.profile || draft.profile === "default" ? "standard" : draft.profile;
     const model: ModelConfig = {
       name: draft.model.name,
       ...(draft.model.temperature === undefined ? {} : { temperature: draft.model.temperature }),
@@ -187,8 +199,8 @@ export class AgentDefinitionRepository {
       description: draft.description,
       model,
       profiles: {
-        default: draft.profile || "default",
-        [draft.profile || "default"]: { skills: [] },
+        default: profile,
+        [profile]: { skills: [] },
       },
     };
     const md = `---\n${stringify(frontmatter).trim()}\n---\n\n${draft.systemPrompt.trim()}\n`;
@@ -279,8 +291,11 @@ export function selectAgents(
       .reduce((score, keyword) => score + (lower.includes(keyword.toLowerCase()) ? 20 : 0), 0);
     const negative = selection.negativeHints
       .reduce((score, keyword) => score + (lower.includes(keyword.toLowerCase()) ? 30 : 0), 0);
-    return { agent, score: selection.priority + positive - negative };
+    const matchScore = positive - negative;
+    return { agent, matchScore, score: selection.priority + matchScore };
   }).sort((a, b) => b.score - a.score);
-  const selected = scored.filter((item) => item.score >= 50).slice(0, 6).map((item) => item.agent);
-  return selected.length > 0 ? selected : eligible.slice(0, 3);
+  const matched = scored.filter((item) => item.matchScore > 0).slice(0, 6).map((item) => item.agent);
+  if (matched.length > 0) return matched;
+  const neutral = scored.filter((item) => item.matchScore === 0).slice(0, 3).map((item) => item.agent);
+  return neutral.length > 0 ? neutral : scored.slice(0, 3).map((item) => item.agent);
 }

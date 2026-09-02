@@ -1,7 +1,7 @@
 parallelThinking:
   displayName: "产品策略判断"
   enabled: true
-  provider: openai
+  provider: openrouter
   role: worker
   selection:
     includeInParallel: true

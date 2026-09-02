@@ -44,13 +44,15 @@ describe("parser registry lifecycle", () => {
 
   it("validates and canary-activates a local parser without inheriting API keys", async () => {
     process.env.OPENAI_API_KEY = "sk-secret-must-not-reach-child";
+    process.env.OPENROUTER_API_KEY = "openrouter-secret-must-not-reach-child";
     const parserRoot = join(home, "parsers", "uppercase", "1.0.0");
     mkdirSync(parserRoot, { recursive: true });
     writeFileSync(join(parserRoot, "manifest.yaml"), "id: uppercase\nversion: 1.0.0\nextensions: [.txt]\nentry: index.mjs\n", "utf8");
     writeFileSync(join(parserRoot, "index.mjs"), [
       'import { readFileSync } from "node:fs";',
+      'if (process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY) throw new Error("secret inherited");',
       'const text = readFileSync(process.argv[2], "utf8").toUpperCase();',
-      'process.stdout.write(JSON.stringify({ text, sawSecret: Boolean(process.env.OPENAI_API_KEY) }));',
+      'process.stdout.write(JSON.stringify({ text }));',
     ].join("\n"), "utf8");
     const file = join(project, "sample.txt");
     writeFileSync(file, "hello", "utf8");
@@ -60,12 +62,14 @@ describe("parser registry lifecycle", () => {
     const parsed = await registry.parse(file, ensureProject(project));
     expect(parsed?.text).toBe("HELLO");
     delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
   });
 });
 
 describe("run archive secret redaction", () => {
   it("redacts configured keys and key-like strings before persistence", () => {
     process.env.OPENAI_API_KEY = "sk-test-secret-123456789012345";
+    process.env.OPENROUTER_API_KEY = "openrouter-test-secret-123456789";
     const paths = ensureProject(project);
     const store = new RunStore(paths);
     const now = new Date().toISOString();
@@ -80,11 +84,13 @@ describe("run archive secret redaction", () => {
       createdAt: now,
       updatedAt: now,
       agents: {},
-    }, { query: `key is ${process.env.OPENAI_API_KEY}` });
+    }, { query: `keys are ${process.env.OPENAI_API_KEY} and ${process.env.OPENROUTER_API_KEY}` });
     const archive = readFileSync(join(paths.runs, "test-run", "request.json"), "utf8");
     expect(archive).not.toContain("sk-test-secret");
+    expect(archive).not.toContain("openrouter-test-secret");
     expect(archive).toContain("[REDACTED]");
     expect(redactSecrets({ token: "sk-another-secret-12345678" }).token).toContain("[REDACTED");
     delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
   });
 });

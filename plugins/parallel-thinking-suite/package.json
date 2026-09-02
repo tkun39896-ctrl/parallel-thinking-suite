@@ -10,10 +10,11 @@
     "dev": "tsx src/server/server.ts",
     "build": "vite build && node scripts/build.mjs",
     "start": "node dist/server.mjs",
+    "validate:skills": "node scripts/validate-skills.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --pool=threads --fileParallelism=false",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run test && npm run build"
+    "check": "npm run validate:skills && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "mammoth": "1.12.2",

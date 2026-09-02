@@ -11,11 +11,10 @@ import {
 import { join } from "node:path";
 import type { AgentRunResult, RunEvent, RunManifest, RunRequest } from "../shared/types.js";
 import type { ProjectPaths } from "./config.js";
+import { configuredSecretValues } from "./secrets.js";
 
 function secretValues(): string[] {
-  return ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"]
-    .map((name) => process.env[name]?.trim())
-    .filter((value): value is string => Boolean(value && value.length >= 8));
+  return configuredSecretValues();
 }
 
 export function redactSecrets<T>(value: T): T {
@@ -87,7 +86,9 @@ export class RunStore {
     runId: string;
     query: string;
     status: string;
-    agents: Array<Pick<AgentRunResult, "agentId" | "displayName" | "provider" | "model" | "status" | "output" | "error">>;
+    executionMode?: RunManifest["executionMode"];
+    executionHost?: string;
+    agents: Array<Pick<AgentRunResult, "agentId" | "displayName" | "provider" | "model" | "executor" | "resolvedModel" | "status" | "output" | "error">>;
   } {
     const runId = this.resolveRunId(id);
     const manifest = this.get(runId);
@@ -95,11 +96,15 @@ export class RunStore {
       runId,
       query: manifest.query,
       status: manifest.status,
+      executionMode: manifest.executionMode,
+      executionHost: manifest.executionHost,
       agents: Object.values(manifest.agents).map((agent) => ({
         agentId: agent.agentId,
         displayName: agent.displayName,
         provider: agent.provider,
         model: agent.model,
+        executor: agent.executor,
+        resolvedModel: agent.resolvedModel,
         status: agent.status,
         output: agent.output,
         error: agent.error,

@@ -1,0 +1,29 @@
+models:
+  - id: openai-flagship
+    displayName: GPT-5.6 Sol
+    provider: openai
+    model: gpt-5.6-sol
+    description: OpenAI 当前旗舰通用与 Agent 模型。
+    verifiedAt: "2026-09-02"
+    sourceUrl: https://developers.openai.com/api/docs/models
+  - id: anthropic-flagship
+    displayName: Claude Fable 5.1
+    provider: anthropic
+    model: claude-fable-5-1
+    description: Anthropic 面向高强度推理与长程 Agent 工作的最高能力模型。
+    verifiedAt: "2026-09-02"
+    sourceUrl: https://platform.claude.com/docs/en/models/overview
+  - id: deepseek-flagship
+    displayName: DeepSeek V4 Pro
+    provider: deepseek
+    model: deepseek-v4-pro
+    description: DeepSeek V4 系列的高能力生产模型。
+    verifiedAt: "2026-09-02"
+    sourceUrl: https://api-docs.deepseek.com/quick_start/pricing
+  - id: openrouter-auto
+    displayName: OpenRouter Auto
+    provider: openrouter
+    model: openrouter/auto
+    description: 由 OpenRouter 根据当前问题从高质量模型集合中自动路由。
+    verifiedAt: "2026-09-02"
+    sourceUrl: https://openrouter.ai/docs/guides/routing/routers/auto-router

@@ -69,6 +69,7 @@
 - 子进程环境只保留运行所需的 PATH、SystemRoot、TEMP、TMP；不得继承 OpenAI、Anthropic、DeepSeek 密钥。
 - 单次运行上限 15 秒，父进程负责终止超时子进程。
 - 不支持的文件应显式标记“跳过”，不得让整个 Agent 运行失败。
+- 子进程同样不得继承 OpenRouter 密钥或归因请求头配置。
 
 ## 6. 自动回滚
 

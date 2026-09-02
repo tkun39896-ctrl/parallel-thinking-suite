@@ -2,10 +2,11 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { URL } from "node:url";
-import type { AgentDraft, ProviderId, RunRequest } from "../shared/types.js";
+import type { AgentDraft, NativeAgentResultSubmission, ProviderId, RunRequest } from "../shared/types.js";
 import { AgentDefinitionRepository } from "./agents.js";
-import { ensureGlobalHome, ensureProject, pluginRoot } from "./config.js";
+import { assertInside, ensureGlobalHome, ensureProject, pluginRoot } from "./config.js";
 import { inspectKnowledge } from "./knowledge.js";
+import { ModelCatalogRepository } from "./models.js";
 import { Orchestrator } from "./orchestrator.js";
 import { collectFiles, ParserRegistry } from "./parsers.js";
 import { providerStatuses, testProvider } from "./providers.js";
@@ -14,6 +15,7 @@ const host = "127.0.0.1";
 const port = Number(process.env.PARALLEL_THINK_PORT || 4317);
 const home = ensureGlobalHome();
 const agents = new AgentDefinitionRepository();
+const models = new ModelCatalogRepository();
 const parsers = new ParserRegistry();
 const orchestrator = new Orchestrator({ agents, parsers });
 
@@ -54,7 +56,11 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     json(response, 200, providerStatuses());
     return;
   }
-  const providerTest = url.pathname.match(/^\/api\/providers\/(openai|anthropic|deepseek)\/test$/);
+  if (method === "GET" && url.pathname === "/api/models") {
+    json(response, 200, models.listModels());
+    return;
+  }
+  const providerTest = url.pathname.match(/^\/api\/providers\/(openai|anthropic|deepseek|openrouter)\/test$/);
   if (method === "POST" && providerTest) {
     json(response, 200, await testProvider(providerTest[1] as ProviderId));
     return;
@@ -80,6 +86,11 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   if (method === "GET" && url.pathname === "/api/runs") {
     json(response, 200, orchestrator.listRuns(projectRoot(url)));
+    return;
+  }
+  if (method === "POST" && url.pathname === "/api/runs/native") {
+    const body = await readJson<RunRequest>(request);
+    json(response, 202, await orchestrator.createNativeRun(body));
     return;
   }
   if (method === "POST" && url.pathname === "/api/runs") {
@@ -121,6 +132,13 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   if (method === "POST" && retryMatch) {
     const body = await readJson<{ projectRoot?: string }>(request);
     json(response, 202, orchestrator.retryFailed(retryMatch[1]!, body.projectRoot));
+    return;
+  }
+  const nativeResultMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/native-result$/);
+  if (method === "POST" && nativeResultMatch) {
+    const body = await readJson<{ projectRoot?: string; result: NativeAgentResultSubmission }>(request);
+    if (!body.result) throw new Error("result 不能为空");
+    json(response, 200, orchestrator.recordNativeResult(nativeResultMatch[1]!, body.projectRoot, body.result));
     return;
   }
   const contextMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/context$/);
@@ -177,10 +195,10 @@ const contentTypes: Record<string, string> = {
 function serveStatic(pathname: string, response: ServerResponse): void {
   const publicRoot = join(pluginRoot, "dist", "public");
   const relative = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
-  const candidate = normalize(join(publicRoot, relative));
-  const allowedPrefix = publicRoot.toLowerCase() + "\\";
-  let path = candidate;
-  if (candidate !== publicRoot && !candidate.toLowerCase().startsWith(allowedPrefix)) {
+  let path: string;
+  try {
+    path = assertInside(publicRoot, normalize(join(publicRoot, relative)));
+  } catch {
     json(response, 403, { error: { code: "FORBIDDEN", message: "静态文件路径越界" } });
     return;
   }

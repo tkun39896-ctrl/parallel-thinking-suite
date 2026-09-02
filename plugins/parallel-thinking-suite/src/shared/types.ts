@@ -1,9 +1,25 @@
-export type ProviderId = "openai" | "anthropic" | "deepseek";
+export type ProviderId = "openai" | "anthropic" | "deepseek" | "openrouter";
 export type ContextMode = "summary" | "prompt-only" | "full";
 export type SelectionMode = "auto" | "all" | "explicit";
+export type ExecutionMode = "provider" | "host-native";
 export type AgentRole = "worker" | "synthesizer";
 export type AgentRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type RunStatus = "queued" | "running" | "partial" | "completed" | "failed" | "cancelled";
+
+export interface ModelDefinition {
+  id: string;
+  displayName: string;
+  provider: ProviderId;
+  model: string;
+  description: string;
+  verifiedAt: string;
+  sourceUrl: string;
+}
+
+export interface AgentAvatar {
+  kind: "provider";
+  provider: ProviderId;
+}
 
 export interface SelectionConfig {
   includeInParallel: boolean;
@@ -17,6 +33,8 @@ export interface AgentExtension {
   displayName: string;
   enabled: boolean;
   provider: ProviderId;
+  modelId?: string;
+  avatar: AgentAvatar;
   role: AgentRole;
   selection: SelectionConfig;
   knowledge: {
@@ -62,6 +80,10 @@ export interface RunRequest {
     agentIds?: string[];
   };
   agentTasks?: Record<string, string>;
+  execution?: {
+    mode?: ExecutionMode;
+    host?: string;
+  };
   projectRoot?: string;
 }
 
@@ -69,7 +91,10 @@ export interface AgentRunResult {
   agentId: string;
   displayName: string;
   provider: ProviderId;
+  avatar?: AgentAvatar;
   model: string;
+  executor?: ExecutionMode;
+  resolvedModel?: string;
   status: AgentRunStatus;
   task: string;
   output: string;
@@ -84,6 +109,8 @@ export interface RunManifest {
   query: string;
   contextMode: ContextMode;
   selectionMode: SelectionMode;
+  executionMode?: ExecutionMode;
+  executionHost?: string;
   selectedAgents: string[];
   projectRoot: string;
   status: RunStatus;
@@ -97,12 +124,39 @@ export interface RunManifest {
   };
 }
 
+export interface NativeAgentTask {
+  agentId: string;
+  displayName: string;
+  task: string;
+  systemPrompt: string;
+  contextPackage: string;
+  fallbackProvider: ProviderId;
+  fallbackModel: string;
+}
+
+export interface NativeRunPlan {
+  manifest: RunManifest;
+  tasks: NativeAgentTask[];
+}
+
+export interface NativeAgentResultSubmission {
+  agentId: string;
+  status: "completed" | "failed" | "cancelled";
+  output?: string;
+  error?: string;
+  resolvedModel?: string;
+  usage?: Record<string, number>;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 export interface RunEvent {
   runId: string;
   sequence: number;
   type:
     | "run_started"
     | "agent_started"
+    | "model_resolved"
     | "text_delta"
     | "usage"
     | "agent_completed"
@@ -123,6 +177,7 @@ export interface ProviderStatus {
   id: ProviderId;
   label: string;
   configured: boolean;
+  credentialSource?: "environment" | "macos-keychain";
   envKey: string;
   model: string;
   baseUrl: string;

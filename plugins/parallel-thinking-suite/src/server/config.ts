@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 function findPluginRoot(): string {
@@ -21,7 +21,11 @@ export function globalHome(): string {
 export function ensureGlobalHome(): string {
   const root = globalHome();
   mkdirSync(root, { recursive: true });
-  copyMissingTree(join(pluginRoot, "templates", "global"), root);
+  const defaults = join(pluginRoot, "templates", "global");
+  for (const entry of readdirSync(defaults)) {
+    if (entry === "agents") continue;
+    copyMissingTree(join(defaults, entry), join(root, entry));
+  }
   for (const relative of [
     "agents",
     "knowledge/shared",
@@ -76,8 +80,8 @@ function copyMissingTree(source: string, destination: string): void {
 export function assertInside(parent: string, candidate: string): string {
   const root = resolve(parent);
   const target = resolve(candidate);
-  const prefix = root.endsWith("\\") || root.endsWith("/") ? root : root + "\\";
-  if (target !== root && !target.toLowerCase().startsWith(prefix.toLowerCase())) {
+  const relation = relative(root, target);
+  if (relation === ".." || relation.startsWith(`..${sep}`) || isAbsolute(relation)) {
     throw new Error(`路径越界：${candidate}`);
   }
   return target;

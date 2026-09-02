@@ -1,4 +1,6 @@
 import type { AgentSummary, ProviderId, ProviderStatus } from "../shared/types.js";
+import { redactSecrets } from "./run-store.js";
+import { providerCredential } from "./secrets.js";
 
 interface ProviderDefinition {
   id: ProviderId;
@@ -16,7 +18,7 @@ const providerDefinitions: Record<ProviderId, ProviderDefinition> = {
     label: "OpenAI",
     keyEnv: "OPENAI_API_KEY",
     modelEnv: "OPENAI_MODEL",
-    defaultModel: "gpt-5-mini",
+    defaultModel: "gpt-5.6-sol",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultBaseUrl: "https://api.openai.com",
   },
@@ -25,7 +27,7 @@ const providerDefinitions: Record<ProviderId, ProviderDefinition> = {
     label: "Anthropic",
     keyEnv: "ANTHROPIC_API_KEY",
     modelEnv: "ANTHROPIC_MODEL",
-    defaultModel: "claude-sonnet-4-5",
+    defaultModel: "claude-fable-5-1",
     baseUrlEnv: "ANTHROPIC_BASE_URL",
     defaultBaseUrl: "https://api.anthropic.com",
   },
@@ -34,9 +36,18 @@ const providerDefinitions: Record<ProviderId, ProviderDefinition> = {
     label: "DeepSeek",
     keyEnv: "DEEPSEEK_API_KEY",
     modelEnv: "DEEPSEEK_MODEL",
-    defaultModel: "deepseek-chat",
+    defaultModel: "deepseek-v4-pro",
     baseUrlEnv: "DEEPSEEK_BASE_URL",
     defaultBaseUrl: "https://api.deepseek.com",
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    keyEnv: "OPENROUTER_API_KEY",
+    modelEnv: "OPENROUTER_MODEL",
+    defaultModel: "openrouter/auto",
+    baseUrlEnv: "OPENROUTER_BASE_URL",
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
   },
 };
 
@@ -45,23 +56,42 @@ function definition(id: ProviderId): ProviderDefinition {
 }
 
 function apiKey(id: ProviderId): string {
-  return process.env[definition(id).keyEnv]?.trim() || "";
+  return providerCredential(id).value;
 }
 
 function baseUrl(id: ProviderId): string {
   const config = definition(id);
-  return (process.env[config.baseUrlEnv]?.trim() || config.defaultBaseUrl).replace(/\/$/, "");
+  return (process.env[config.baseUrlEnv]?.trim() || config.defaultBaseUrl).replace(/\/+$/, "");
+}
+
+function endpoint(id: ProviderId, path: string): string {
+  return `${baseUrl(id)}/${path.replace(/^\/+/, "")}`;
+}
+
+function openRouterHeaders(): Record<string, string> {
+  const referer = process.env.OPENROUTER_HTTP_REFERER?.trim();
+  const title = process.env.OPENROUTER_APP_TITLE?.trim();
+  return {
+    "content-type": "application/json",
+    authorization: `Bearer ${apiKey("openrouter")}`,
+    ...(referer ? { "HTTP-Referer": referer } : {}),
+    ...(title ? { "X-OpenRouter-Title": title } : {}),
+  };
 }
 
 export function providerStatuses(): ProviderStatus[] {
-  return Object.values(providerDefinitions).map((config) => ({
-    id: config.id,
-    label: config.label,
-    configured: Boolean(apiKey(config.id)),
-    envKey: config.keyEnv,
-    model: process.env[config.modelEnv]?.trim() || config.defaultModel,
-    baseUrl: baseUrl(config.id),
-  }));
+  return Object.values(providerDefinitions).map((config) => {
+    const credential = providerCredential(config.id);
+    return {
+      id: config.id,
+      label: config.label,
+      configured: Boolean(credential.value),
+      credentialSource: credential.source,
+      envKey: config.keyEnv,
+      model: process.env[config.modelEnv]?.trim() || config.defaultModel,
+      baseUrl: baseUrl(config.id),
+    };
+  });
 }
 
 export class ProviderError extends Error {
@@ -82,6 +112,7 @@ interface StreamAgentOptions {
   contextPackage: string;
   signal: AbortSignal;
   onDelta: (delta: string) => void;
+  onModel?: (model: string) => void;
   onUsage: (usage: Record<string, number>) => void;
 }
 
@@ -112,31 +143,34 @@ async function parseSse(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const dispatch = (block: string) => {
+    let eventName: string | undefined;
+    const data: string[] = [];
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+    }
+    if (data.length > 0) onEvent(eventName, data.join("\n"));
+  };
+  const drain = () => {
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      dispatch(buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+    }
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      let eventName: string | undefined;
-      const data: string[] = [];
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event:")) eventName = line.slice(6).trim();
-        if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
-      }
-      if (data.length > 0) onEvent(eventName, data.join("\n"));
-      boundary = buffer.indexOf("\n\n");
-    }
+    buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r\n/g, "\n");
+    drain();
   }
-  if (buffer.trim()) {
-    const data = buffer.split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (data) onEvent(undefined, data);
-  }
+  buffer += decoder.decode();
+  buffer = buffer.replace(/\r\n/g, "\n");
+  drain();
+  if (buffer.trim()) dispatch(buffer);
 }
 
 function transientStatus(status: number): boolean {
@@ -152,8 +186,8 @@ async function checkedFetch(url: string, init: RequestInit): Promise<Response> {
     throw new ProviderError("无法连接模型厂商 API", { transient: true, cause: error });
   }
   if (!response.ok) {
-    const requestId = response.headers.get("request-id") || response.headers.get("x-request-id");
-    const detail = (await response.text()).slice(0, 600);
+    const requestId = response.headers.get("request-id") || response.headers.get("x-request-id") || response.headers.get("x-generation-id");
+    const detail = redactSecrets((await response.text()).slice(0, 600));
     throw new ProviderError(
       `模型厂商返回 HTTP ${response.status}${requestId ? `（request-id: ${requestId}）` : ""}：${detail || response.statusText}`,
       { transient: transientStatus(response.status), status: response.status },
@@ -173,7 +207,7 @@ async function streamOpenAI(options: StreamAgentOptions, signal: AbortSignal): P
     ],
     max_output_tokens: options.agent.model.maxTokens || 2600,
   };
-  const response = await checkedFetch(`${baseUrl("openai")}/v1/responses`, {
+  const response = await checkedFetch(endpoint("openai", "v1/responses"), {
     method: "POST",
     signal,
     headers: {
@@ -203,7 +237,7 @@ async function streamOpenAI(options: StreamAgentOptions, signal: AbortSignal): P
 
 async function streamAnthropic(options: StreamAgentOptions, signal: AbortSignal): Promise<void> {
   const { system, user } = promptParts(options);
-  const response = await checkedFetch(`${baseUrl("anthropic")}/v1/messages`, {
+  const response = await checkedFetch(endpoint("anthropic", "v1/messages"), {
     method: "POST",
     signal,
     headers: {
@@ -237,7 +271,7 @@ async function streamAnthropic(options: StreamAgentOptions, signal: AbortSignal)
 
 async function streamDeepSeek(options: StreamAgentOptions, signal: AbortSignal): Promise<void> {
   const { system, user } = promptParts(options);
-  const response = await checkedFetch(`${baseUrl("deepseek")}/chat/completions`, {
+  const response = await checkedFetch(endpoint("deepseek", "chat/completions"), {
     method: "POST",
     signal,
     headers: {
@@ -259,6 +293,51 @@ async function streamDeepSeek(options: StreamAgentOptions, signal: AbortSignal):
   await parseSse(response.body, (_event, data) => {
     if (data === "[DONE]") return;
     const value = JSON.parse(data) as Record<string, any>;
+    const delta = value.choices?.[0]?.delta?.content;
+    if (typeof delta === "string" && delta) options.onDelta(delta);
+    if (value.usage) {
+      options.onUsage({
+        inputTokens: Number(value.usage.prompt_tokens || 0),
+        outputTokens: Number(value.usage.completion_tokens || 0),
+        totalTokens: Number(value.usage.total_tokens || 0),
+      });
+    }
+  });
+}
+
+async function streamOpenRouter(options: StreamAgentOptions, signal: AbortSignal): Promise<void> {
+  const { system, user } = promptParts(options);
+  let observedModel: string | undefined;
+  const response = await checkedFetch(endpoint("openrouter", "chat/completions"), {
+    method: "POST",
+    signal,
+    headers: openRouterHeaders(),
+    body: JSON.stringify({
+      model: modelFor(options.agent),
+      stream: true,
+      stream_options: { include_usage: true },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: options.agent.model.maxTokens || 2600,
+      temperature: options.agent.model.temperature,
+    }),
+  });
+  await parseSse(response.body, (_event, data) => {
+    if (data === "[DONE]") return;
+    const value = JSON.parse(data) as Record<string, any>;
+    if (value.error) {
+      const status = Number(value.error.code);
+      throw new ProviderError(
+        `OpenRouter 生成失败${Number.isFinite(status) ? `（${status}）` : ""}：${redactSecrets(String(value.error.message || "未知错误"))}`,
+        { status: Number.isFinite(status) ? status : undefined, transient: Number.isFinite(status) && transientStatus(status) },
+      );
+    }
+    if (typeof value.model === "string" && value.model && value.model !== observedModel) {
+      observedModel = value.model;
+      options.onModel?.(value.model);
+    }
     const delta = value.choices?.[0]?.delta?.content;
     if (typeof delta === "string" && delta) options.onDelta(delta);
     if (value.usage) {
@@ -298,6 +377,7 @@ export async function streamAgent(options: StreamAgentOptions): Promise<void> {
       if (provider === "openai") await streamOpenAI(wrapped, signal);
       if (provider === "anthropic") await streamAnthropic(wrapped, signal);
       if (provider === "deepseek") await streamDeepSeek(wrapped, signal);
+      if (provider === "openrouter") await streamOpenRouter(wrapped, signal);
       return;
     } catch (error) {
       lastError = error;
@@ -323,29 +403,36 @@ export async function testProvider(id: ProviderId): Promise<{ ok: boolean; laten
   const controller = AbortSignal.timeout(20_000);
   try {
     if (id === "openai") {
-      await checkedFetch(`${baseUrl(id)}/v1/responses`, {
+      await checkedFetch(endpoint(id, "v1/responses"), {
         method: "POST",
         signal: controller,
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey(id)}` },
         body: JSON.stringify({ model, input: "Reply with OK.", max_output_tokens: 8 }),
       });
     } else if (id === "anthropic") {
-      await checkedFetch(`${baseUrl(id)}/v1/messages`, {
+      await checkedFetch(endpoint(id, "v1/messages"), {
         method: "POST",
         signal: controller,
         headers: { "content-type": "application/json", "x-api-key": apiKey(id), "anthropic-version": "2023-06-01" },
         body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "Reply with OK." }] }),
       });
-    } else {
-      await checkedFetch(`${baseUrl(id)}/chat/completions`, {
+    } else if (id === "deepseek") {
+      await checkedFetch(endpoint(id, "chat/completions"), {
         method: "POST",
         signal: controller,
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey(id)}` },
         body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "Reply with OK." }] }),
       });
+    } else {
+      await checkedFetch(endpoint(id, "chat/completions"), {
+        method: "POST",
+        signal: controller,
+        headers: openRouterHeaders(),
+        body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "Reply with OK." }] }),
+      });
     }
     return { ok: true, latencyMs: Date.now() - started, message: "连接成功" };
   } catch (error) {
-    return { ok: false, latencyMs: Date.now() - started, message: error instanceof Error ? error.message : String(error) };
+    return { ok: false, latencyMs: Date.now() - started, message: redactSecrets(error instanceof Error ? error.message : String(error)) };
   }
 }

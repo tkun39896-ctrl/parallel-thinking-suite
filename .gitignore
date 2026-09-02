@@ -7,3 +7,5 @@ coverage/
 .env
 .env.*
 !.env.example
+.codex/
+.skills-auditor-local/

@@ -4,11 +4,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { extname, join } from "node:path";
 import mammoth from "mammoth";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import readExcelFile from "read-excel-file/node";
@@ -139,7 +140,9 @@ export class ParserRegistry {
     try {
       if (!record.entry || !record.root || !existsSync(record.entry)) throw new Error("解析器入口文件不存在");
       if (!record.entry.endsWith(".mjs") && !record.entry.endsWith(".js")) throw new Error("解析器入口必须是 .js 或 .mjs");
-      await this.checkSyntax(record.entry);
+      const runtimeRoot = realpathSync(record.root);
+      const runtimeEntry = assertInside(runtimeRoot, realpathSync(record.entry));
+      await this.checkSyntax(runtimeEntry);
       record.status = "discovered";
       record.consecutiveHardFailures = 0;
     } catch (error) {
@@ -258,16 +261,19 @@ export class ParserRegistry {
 
   private async runExtension(record: ParserRuntimeRecord, filePath: string): Promise<string> {
     if (!record.entry || !record.root) throw new Error("解析器入口未配置");
+    const runtimeRoot = realpathSync(record.root);
+    const runtimeEntry = assertInside(runtimeRoot, realpathSync(record.entry));
+    const runtimeFile = realpathSync(filePath);
     const args = [
       "--permission",
-      `--allow-fs-read=${record.root}`,
-      `--allow-fs-read=${resolve(filePath)}`,
-      record.entry,
-      resolve(filePath),
+      `--allow-fs-read=${runtimeRoot}`,
+      `--allow-fs-read=${runtimeFile}`,
+      runtimeEntry,
+      runtimeFile,
     ];
     const output = await new Promise<string>((resolveOutput, reject) => {
       const child = spawn(process.execPath, args, {
-        cwd: record.root,
+        cwd: runtimeRoot,
         env: {
           PATH: process.env.PATH || "",
           SystemRoot: process.env.SystemRoot || "",

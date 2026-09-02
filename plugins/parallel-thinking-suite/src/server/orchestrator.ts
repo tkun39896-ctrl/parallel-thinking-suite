@@ -4,6 +4,9 @@ import { parse as parseYaml } from "yaml";
 import type {
   AgentRunResult,
   AgentSummary,
+  ExecutionMode,
+  NativeAgentResultSubmission,
+  NativeRunPlan,
   ProviderId,
   RunEvent,
   RunManifest,
@@ -58,6 +61,104 @@ export class Orchestrator {
   }
 
   createRun(request: RunRequest): RunManifest {
+    const { run, selected } = this.prepareRun(request, "provider");
+    this.activeRuns.set(run.manifest.id, run);
+    queueMicrotask(() => void this.execute(run, selected));
+    return run.manifest;
+  }
+
+  async createNativeRun(request: RunRequest): Promise<NativeRunPlan> {
+    const host = request.execution?.host?.trim();
+    if (!host) throw new Error("host-native 运行必须声明 execution.host");
+    const { run, selected } = this.prepareRun(request, "host-native", host);
+    run.manifest.status = "running";
+    run.manifest.updatedAt = new Date().toISOString();
+    run.store.writeManifest(run.manifest);
+    this.emit(run, "run_started", {
+      data: { selectedAgents: run.manifest.selectedAgents, executionMode: "host-native", executionHost: host },
+    });
+    const tasks = await Promise.all(selected.map(async (agent) => ({
+      agentId: agent.id,
+      displayName: agent.extension.displayName,
+      task: run.manifest.agents[agent.id]!.task,
+      systemPrompt: [
+        "你是“并行思考”中的一个独立 Agent。请独立作答，不假装知道其他 Agent 的答案。",
+        "明确区分事实、推断和不确定性。只输出可公开的最终答案，不输出隐藏思维链。",
+        agent.systemPrompt,
+      ].join("\n\n"),
+      contextPackage: await this.contextForAgent(run, agent),
+      fallbackProvider: agent.extension.provider,
+      fallbackModel: run.manifest.agents[agent.id]!.model,
+    })));
+    return { manifest: run.manifest, tasks };
+  }
+
+  recordNativeResult(
+    runId: string,
+    projectRoot: string | undefined,
+    submission: NativeAgentResultSubmission,
+  ): RunManifest {
+    const paths = ensureProject(projectRoot);
+    const store = new RunStore(paths);
+    const resolved = store.resolveRunId(runId);
+    const manifest = store.get(resolved);
+    if (manifest.executionMode !== "host-native") throw new Error("该运行不是宿主原生运行");
+    const result = manifest.agents[submission.agentId];
+    if (!result) throw new Error(`运行中不存在 Agent：${submission.agentId}`);
+    if (result.completedAt && ["completed", "failed", "cancelled"].includes(result.status)) return manifest;
+
+    result.executor = "host-native";
+    result.status = submission.status;
+    result.startedAt = submission.startedAt || result.startedAt || new Date().toISOString();
+    result.completedAt = submission.completedAt || new Date().toISOString();
+    result.output = submission.output || "";
+    result.error = submission.error;
+    result.resolvedModel = submission.resolvedModel;
+    result.usage = submission.usage;
+
+    this.emitForManifest(store, manifest, "agent_started", {
+      agentId: result.agentId,
+      data: { task: result.task, executionMode: "host-native", executionHost: manifest.executionHost },
+    });
+    if (result.resolvedModel) {
+      this.emitForManifest(store, manifest, "model_resolved", {
+        agentId: result.agentId,
+        data: { model: result.resolvedModel },
+      });
+    }
+    if (result.output) this.emitForManifest(store, manifest, "text_delta", { agentId: result.agentId, delta: result.output });
+    if (result.usage) this.emitForManifest(store, manifest, "usage", { agentId: result.agentId, usage: result.usage });
+    const terminalEvent = result.status === "completed"
+      ? "agent_completed"
+      : result.status === "cancelled" ? "agent_cancelled" : "agent_failed";
+    this.emitForManifest(store, manifest, terminalEvent, { agentId: result.agentId, message: result.error });
+    store.writeAgent(manifest.id, result);
+
+    const values = Object.values(manifest.agents);
+    const allTerminal = values.every((value) => ["completed", "failed", "cancelled"].includes(value.status));
+    if (allTerminal) {
+      if (values.every((value) => value.status === "completed")) manifest.status = "completed";
+      else if (values.some((value) => value.status === "completed")) manifest.status = "partial";
+      else if (values.every((value) => value.status === "cancelled")) manifest.status = "cancelled";
+      else manifest.status = "failed";
+    } else {
+      manifest.status = "running";
+    }
+    manifest.updatedAt = new Date().toISOString();
+    store.writeManifest(manifest);
+    if (allTerminal) {
+      this.emitForManifest(store, manifest, manifest.status === "cancelled" ? "run_cancelled" : "run_completed", {
+        data: { status: manifest.status, executionMode: "host-native", executionHost: manifest.executionHost },
+      });
+    }
+    return manifest;
+  }
+
+  private prepareRun(
+    request: RunRequest,
+    executionMode: ExecutionMode,
+    executionHost?: string,
+  ): { run: ActiveRun; selected: AgentSummary[] } {
     const query = request.query?.trim();
     if (!query) throw new Error("query 不能为空");
     const paths = ensureProject(request.projectRoot);
@@ -74,7 +175,9 @@ export class Orchestrator {
         agentId: agent.id,
         displayName: agent.extension.displayName,
         provider: agent.extension.provider,
+        avatar: agent.extension.avatar,
         model,
+        executor: executionMode,
         status: "queued",
         task,
         output: "",
@@ -85,6 +188,8 @@ export class Orchestrator {
       query,
       contextMode: request.contextMode || "summary",
       selectionMode: mode,
+      executionMode,
+      executionHost,
       selectedAgents: selected.map((agent) => agent.id),
       projectRoot: paths.root,
       status: "queued",
@@ -92,7 +197,12 @@ export class Orchestrator {
       updatedAt: now,
       agents: agentResults,
     };
-    const normalizedRequest: RunRequest = { ...request, query, projectRoot: paths.root };
+    const normalizedRequest: RunRequest = {
+      ...request,
+      query,
+      execution: { mode: executionMode, ...(executionHost ? { host: executionHost } : {}) },
+      projectRoot: paths.root,
+    };
     store.create(manifest, normalizedRequest);
     const run: ActiveRun = {
       manifest,
@@ -102,9 +212,7 @@ export class Orchestrator {
       controller: new AbortController(),
       sequence: 0,
     };
-    this.activeRuns.set(id, run);
-    queueMicrotask(() => void this.execute(run, selected));
-    return manifest;
+    return { run, selected };
   }
 
   getRun(runId: string, projectRoot?: string): RunManifest {
@@ -143,6 +251,7 @@ export class Orchestrator {
     const store = new RunStore(paths);
     const resolved = store.resolveRunId(runId);
     const old = store.get(resolved);
+    if (old.executionMode === "host-native") throw new Error("宿主原生运行请由当前宿主重新规划失败 Agent");
     const request = store.getRequest(resolved);
     const failed = Object.values(old.agents)
       .filter((agent) => agent.status === "failed" || agent.status === "cancelled")
@@ -192,7 +301,7 @@ export class Orchestrator {
     };
     const globalSemaphore = new Semaphore(projectConfig.concurrency?.global || 6);
     const perProvider = new Map<ProviderId, Semaphore>();
-    for (const provider of ["openai", "anthropic", "deepseek"] as ProviderId[]) {
+    for (const provider of ["openai", "anthropic", "deepseek", "openrouter"] as ProviderId[]) {
       perProvider.set(provider, new Semaphore(projectConfig.concurrency?.perProvider || 2));
     }
 
@@ -226,12 +335,7 @@ export class Orchestrator {
     result.startedAt = new Date().toISOString();
     this.emit(run, "agent_started", { agentId: agent.id, data: { task: result.task } });
     try {
-      const knowledge = await buildKnowledgePackage(agent, run.paths, this.parsers);
-      const conversation = run.manifest.contextMode === "prompt-only" ? "" : (run.request.context || "");
-      const contextPackage = [
-        conversation ? `## 对话上下文\n${conversation}` : "",
-        knowledge.text ? `## Agent 知识库\n${knowledge.text}` : "",
-      ].filter(Boolean).join("\n\n");
+      const contextPackage = await this.contextForAgent(run, agent);
       await streamAgent({
         agent,
         task: result.task,
@@ -240,6 +344,11 @@ export class Orchestrator {
         onDelta: (delta) => {
           result.output += delta;
           this.emit(run, "text_delta", { agentId: agent.id, delta });
+        },
+        onModel: (resolvedModel) => {
+          if (result.resolvedModel === resolvedModel) return;
+          result.resolvedModel = resolvedModel;
+          this.emit(run, "model_resolved", { agentId: agent.id, data: { model: resolvedModel } });
         },
         onUsage: (usage) => {
           result.usage = { ...result.usage, ...usage };
@@ -265,6 +374,15 @@ export class Orchestrator {
       run.store.writeAgent(run.manifest.id, result);
       run.store.writeManifest(run.manifest);
     }
+  }
+
+  private async contextForAgent(run: ActiveRun, agent: AgentSummary): Promise<string> {
+    const knowledge = await buildKnowledgePackage(agent, run.paths, this.parsers);
+    const conversation = run.manifest.contextMode === "prompt-only" ? "" : (run.request.context || "");
+    return [
+      conversation ? `## 对话上下文\n${conversation}` : "",
+      knowledge.text ? `## Agent 知识库\n${knowledge.text}` : "",
+    ].filter(Boolean).join("\n\n");
   }
 
   private emit(

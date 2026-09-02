@@ -57,23 +57,64 @@ async function requestJson(path: string, init?: RequestInit): Promise<any> {
 
 async function main(): Promise<void> {
   const command = process.argv[2];
-  if (!["run", "context", "aggregate"].includes(command || "")) {
-    throw new Error("用法：cli.mjs run --stdin | context --run <id> | aggregate --run <id>");
+  if (!["run", "plan-native", "record-native", "context", "aggregate"].includes(command || "")) {
+    throw new Error("用法：cli.mjs run --stdin | plan-native --stdin | record-native --stdin | context --run <id> | aggregate --run <id>");
   }
   await ensureServer();
   if (command === "run") {
     const raw = await stdin();
     const input = JSON.parse(raw || "{}");
-    const manifest = await requestJson("/api/runs", { method: "POST", body: JSON.stringify(input) });
+    const providerInput = { ...input, execution: { mode: "provider" } };
+    const manifest = await requestJson("/api/runs", { method: "POST", body: JSON.stringify(providerInput) });
+    const projectRoot = String(manifest.projectRoot || input.projectRoot || process.cwd());
     process.stdout.write(JSON.stringify({
       runId: manifest.id,
-      url: `${origin}/runs/${manifest.id}`,
+      url: `${origin}/runs/${manifest.id}?projectRoot=${encodeURIComponent(projectRoot)}`,
       selectedAgents: manifest.selectedAgents,
       taskStructure: Object.values(manifest.agents).map((agent: any) => ({
         agentId: agent.agentId,
         task: agent.task,
         provider: agent.provider,
       })),
+    }, null, 2) + "\n");
+    return;
+  }
+  if (command === "plan-native") {
+    const raw = await stdin();
+    const input = JSON.parse(raw || "{}");
+    const host = String(input.execution?.host || argument("--host") || "").trim();
+    if (!host) throw new Error("plan-native 需要 execution.host 或 --host");
+    const plan = await requestJson("/api/runs/native", {
+      method: "POST",
+      body: JSON.stringify({ ...input, execution: { mode: "host-native", host } }),
+    });
+    const manifest = plan.manifest;
+    const projectRoot = String(manifest.projectRoot || input.projectRoot || process.cwd());
+    process.stdout.write(JSON.stringify({
+      runId: manifest.id,
+      url: `${origin}/runs/${manifest.id}?projectRoot=${encodeURIComponent(projectRoot)}`,
+      executionMode: manifest.executionMode,
+      executionHost: manifest.executionHost,
+      selectedAgents: manifest.selectedAgents,
+      tasks: plan.tasks,
+    }, null, 2) + "\n");
+    return;
+  }
+  if (command === "record-native") {
+    const raw = await stdin();
+    const input = JSON.parse(raw || "{}");
+    const runId = String(input.runId || "").trim();
+    if (!runId) throw new Error("record-native 需要 runId");
+    if (!input.result) throw new Error("record-native 需要 result");
+    const manifest = await requestJson(`/api/runs/${encodeURIComponent(runId)}/native-result`, {
+      method: "POST",
+      body: JSON.stringify({ projectRoot: input.projectRoot || process.cwd(), result: input.result }),
+    });
+    process.stdout.write(JSON.stringify({
+      runId: manifest.id,
+      status: manifest.status,
+      agentId: input.result.agentId,
+      agentStatus: manifest.agents?.[input.result.agentId]?.status,
     }, null, 2) + "\n");
     return;
   }

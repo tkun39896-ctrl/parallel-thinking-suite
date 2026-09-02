@@ -4,8 +4,7 @@ version: "1.0.0"
 name: product-strategist
 description: 从用户问题、产品价值、优先级和验证路径角度提出方案。
 model:
-  name: gpt-5-mini
-  temperature: 0.45
+  name: openai/gpt-5-mini
   maxTokens: 2600
 profiles:
   default: analysis

@@ -1,6 +1,6 @@
 # 并行思考（Parallel Thinking Suite）
 
-这是“并行思考”个人本地 Codex 插件的源码仓库。它可以把一个问题交给多个使用不同模型、系统提示词和知识库的 Agent 并行回答，并在本地 HTML 工作台中实时呈现结果，再通过“聚合答案”形成共识、分歧、风险与可执行建议。
+这是“并行思考”宿主感知插件的源码仓库。它优先使用 Codex、Claude Code 等当前上下文管理器的原生多 Agent 能力；显式指定模型或宿主缺少原生并行时，再使用 OpenAI、Anthropic、DeepSeek 或 OpenRouter。所有路径都进入同一个本地 HTML 工作台与运行归档。
 
 ## 仓库结构
 
@@ -20,7 +20,9 @@ npm.cmd install
 npm.cmd run check
 ```
 
-API 密钥只从服务端环境变量读取。请勿把真实密钥提交到仓库；可用变量名见 `plugins/parallel-thinking-suite/.env.example`。
+仓库级开发约束见 [AGENTS.md](AGENTS.md)。`npm run check` 会依次校验三个 Skill 包、执行类型检查与隔离测试，并生成生产构建；面向插件实现、修复或发布的迭代由 `parallel-thinking-development` Skill 管理开发生命周期。
+
+API 密钥只由本地服务从服务端环境或系统凭据存储解析。支持 OpenAI、Anthropic、DeepSeek 直连以及原生 OpenRouter；宿主原生运行不需要 Provider Key。请勿把真实密钥提交到仓库，可用变量名见 `plugins/parallel-thinking-suite/.env.example`。
 
 ## 本地安装到 Codex
 

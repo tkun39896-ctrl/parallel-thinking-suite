@@ -4,7 +4,7 @@ version: "1.0.0"
 name: technology-architect
 description: 从架构、实现成本、依赖和技术风险角度评估方案。
 model:
-  name: deepseek-chat
+  name: deepseek/deepseek-v4-pro-0813
   temperature: 0.35
   maxTokens: 2600
 profiles:
