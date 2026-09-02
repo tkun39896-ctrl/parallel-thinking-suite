@@ -1,0 +1,7 @@
+interface:
+  display_name: "并行思考"
+  short_description: "并行调用多个模型与知识 Agent"
+  brand_color: "#2456D6"
+  default_prompt: "使用 $parallel-thinking 让多个 Agent 独立分析我当前的问题。"
+policy:
+  allow_implicit_invocation: true

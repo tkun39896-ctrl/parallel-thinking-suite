@@ -1,0 +1,22 @@
+providers:
+  openai:
+    label: OpenAI
+    envKey: OPENAI_API_KEY
+    modelEnv: OPENAI_MODEL
+    defaultModel: gpt-5-mini
+    baseUrlEnv: OPENAI_BASE_URL
+    defaultBaseUrl: https://api.openai.com
+  anthropic:
+    label: Anthropic
+    envKey: ANTHROPIC_API_KEY
+    modelEnv: ANTHROPIC_MODEL
+    defaultModel: claude-sonnet-4-5
+    baseUrlEnv: ANTHROPIC_BASE_URL
+    defaultBaseUrl: https://api.anthropic.com
+  deepseek:
+    label: DeepSeek
+    envKey: DEEPSEEK_API_KEY
+    modelEnv: DEEPSEEK_MODEL
+    defaultModel: deepseek-chat
+    baseUrlEnv: DEEPSEEK_BASE_URL
+    defaultBaseUrl: https://api.deepseek.com

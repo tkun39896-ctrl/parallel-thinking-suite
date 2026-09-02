@@ -1,0 +1,20 @@
+parallelThinking:
+  displayName: "产品策略判断"
+  enabled: true
+  provider: openai
+  role: worker
+  selection:
+    includeInParallel: true
+    tags: [产品, 用户, 需求, 优先级, 验证]
+    intents: [产品设计, 需求梳理, MVP, 路线图]
+    negativeHints: [只写代码]
+    priority: 55
+  knowledge:
+    sharedMode: auto
+    sharedCollections: [通用知识]
+    privatePaths: [knowledge/product]
+  context:
+    defaultMode: summary
+  limits:
+    firstTokenTimeoutMs: 30000
+    totalTimeoutMs: 180000

@@ -1,0 +1,20 @@
+parallelThinking:
+  displayName: "聚合答案主理人"
+  enabled: true
+  provider: openai
+  role: synthesizer
+  selection:
+    includeInParallel: false
+    tags: [聚合, 汇总, 决策]
+    intents: [聚合答案]
+    negativeHints: []
+    priority: 100
+  knowledge:
+    sharedMode: off
+    sharedCollections: []
+    privatePaths: []
+  context:
+    defaultMode: summary
+  limits:
+    firstTokenTimeoutMs: 30000
+    totalTimeoutMs: 180000

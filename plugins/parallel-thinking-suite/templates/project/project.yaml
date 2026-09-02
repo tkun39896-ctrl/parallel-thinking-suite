@@ -1,0 +1,10 @@
+version: 1
+defaultSelectionMode: auto
+checkedAgents: [technology-architect, product-strategist, critical-reviewer]
+concurrency:
+  global: 6
+  perProvider: 2
+knowledge:
+  maxFilesPerAgent: 24
+  maxCharactersPerAgent: 50000
+runRetentionDays: 90

@@ -1,0 +1,7 @@
+interface:
+  display_name: "聚合答案"
+  short_description: "汇总并行结果中的共识、分歧与行动"
+  brand_color: "#EF6B4A"
+  default_prompt: "使用 $aggregate-answers 汇总最近一次并行思考结果。"
+policy:
+  allow_implicit_invocation: true

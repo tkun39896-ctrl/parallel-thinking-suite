@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.parallel-think/
+.parallel-think-dev/
+coverage/
+*.log
+.env
+.env.*
+!.env.example

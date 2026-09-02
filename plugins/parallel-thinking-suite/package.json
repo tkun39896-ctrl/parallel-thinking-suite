@@ -1,0 +1,38 @@
+{
+  "name": "parallel-thinking-suite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "tsx src/server/server.ts",
+    "build": "vite build && node scripts/build.mjs",
+    "start": "node dist/server.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --pool=threads --fileParallelism=false",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "mammoth": "1.12.2",
+    "pdf-parse": "1.1.1",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "read-excel-file": "9.3.10",
+    "subagent-harness": "0.5.2",
+    "yaml": "2.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.2",
+    "esbuild": "0.25.9",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "vite": "7.1.3",
+    "vitest": "3.2.4"
+  }
+}
