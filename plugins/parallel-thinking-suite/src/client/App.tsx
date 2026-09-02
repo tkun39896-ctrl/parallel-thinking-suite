@@ -606,35 +606,43 @@ function AgentsPage(props: { agents: AgentSummary[]; models: ModelDefinition[]; 
     }
   };
 
-  return (
-    <>
-      <PageTitle
-        eyebrow="Agents"
-        title="定义谁来回答"
-        description="左侧勾选哪些 Agent 可以参与回答；点开某个 Agent 后，再在右侧调整职责、模型与提示词。"
-        aside={<button className="primary-button" onClick={newAgent}>＋ 新建 Agent</button>}
-      />
-      <div className="agents-layout">
-        <aside className="agent-list panel" aria-label="Agent 可用状态与列表">
-          <header className="agent-list-head">
-            <div><b>可用 Agent</b><span>勾选参与回答，点击查看配置</span></div>
-            <small>{props.agents.filter((agent) => agent.extension.enabled).length}/{props.agents.length}</small>
+  if (!draft) {
+    return (
+      <>
+        <PageTitle
+          eyebrow="Agents"
+          title="Agent 列表"
+          description="直接选择谁可以参与回答；职责、模型与类型保持一眼可见，详细配置进入二级页面。"
+          aside={<button className="primary-button" onClick={newAgent}>＋ 新建 Agent</button>}
+        />
+        <section className="agent-directory panel" aria-label="Agent 列表">
+          <header className="agent-directory-head">
+            <div><b>全部 Agent</b><span>点击一行查看并编辑完整配置</span></div>
+            <small>{props.agents.filter((agent) => agent.extension.enabled).length}/{props.agents.length} 可参与</small>
           </header>
-          {props.agents.length === 0 && <div className="agent-list-empty"><b>还没有 Agent</b><span>创建第一个回答角色。</span><button onClick={newAgent}>新建 Agent</button></div>}
-          <div className="agent-list-items">
+          {props.agents.length === 0 && <div className="agent-list-empty"><b>还没有 Agent</b><span>从名称和职责开始，复杂配置可以稍后补充。</span><button onClick={newAgent}>创建第一个 Agent</button></div>}
+          {props.agents.length > 0 && (
+            <div className="agent-list-columns" aria-hidden="true">
+              <span>Agent</span><span>模型</span><span>类型</span><span>参与回答</span><span />
+            </div>
+          )}
+          <div className="agent-list-items" role="list">
             {props.agents.map((agent) => {
               const isSaving = Object.hasOwn(savingAvailability, agent.id);
               const isEnabled = isSaving ? savingAvailability[agent.id]! : agent.extension.enabled;
+              const model = props.models.find((item) => item.id === agent.extension.modelId);
               return (
-                <div key={agent.id} className={`agent-list-item${selectedId === agent.id ? " selected" : ""}${agent.valid ? "" : " invalid"}`}>
-                  <button className="agent-open-button" onClick={() => openAgent(agent)} aria-current={selectedId === agent.id ? "true" : undefined}>
-                    <ProviderIcon provider={agent.extension.avatar.provider} size="small" label={`${agent.extension.displayName} 头像`} />
+                <div key={agent.id} className={`agent-list-item${agent.valid ? "" : " invalid"}`} role="listitem">
+                  <button className="agent-open-button" onClick={() => openAgent(agent)}>
+                    <ProviderIcon provider={agent.extension.avatar.provider} size="medium" label={`${agent.extension.displayName} 头像`} />
                     <span className="agent-list-copy">
                       <b>{agent.extension.displayName}</b>
                       <small>{agent.description || "尚未填写职责描述"}</small>
                       {!agent.valid && <em>配置需要修复</em>}
                     </span>
                   </button>
+                  <span className="agent-model-summary"><b>{model?.displayName || modelDisplayName(agent.extension.provider, agent.model.name)}</b><small>{agent.extension.provider}</small></span>
+                  <span className="agent-role-label">{agent.extension.role === "synthesizer" ? "聚合" : "回答"}</span>
                   <label className="agent-availability">
                     <input
                       type="checkbox"
@@ -645,85 +653,87 @@ function AgentsPage(props: { agents: AgentSummary[]; models: ModelDefinition[]; 
                     />
                     <span>{isSaving ? "保存中" : isEnabled ? "可选择" : "不参与"}</span>
                   </label>
+                  <button className="agent-edit-button" onClick={() => openAgent(agent)} aria-label={`配置 ${agent.extension.displayName}`}>配置 <span aria-hidden="true">›</span></button>
                 </div>
               );
             })}
           </div>
-        </aside>
-        {!draft && (
-          <section className="agent-blank panel">
-            <span className="eyebrow">No selection</span>
-            <h2>选择或新建一个 Agent</h2>
-            <p>默认不载入任何预设，也不展示复杂配置。</p>
-            <button className="secondary-button" onClick={newAgent}>＋ 新建 Agent</button>
-          </section>
-        )}
-        {draft && (
-          <section className="agent-editor panel">
-            <div className="editor-title">
-              <div className="agent-editor-identity"><ProviderIcon provider={draft.extension.avatar.provider} size="large" label={`${draft.extension.displayName || "未命名 Agent"} 头像`} /><div><span className="eyebrow">详细配置</span><h2>{draft.extension.displayName || "未命名 Agent"}</h2></div></div>
-            </div>
-            {!draft.valid && <div className="validation-box">{draft.issues.map((issue) => <p key={issue.code}>{issue.code} · {issue.message}</p>)}</div>}
-            <div className="agent-basic-fields">
-              <Field label="名称"><input autoFocus value={draft.extension.displayName} placeholder="例如：技术顾问" onChange={(event) => update((value) => { value.extension.displayName = event.target.value; })} /></Field>
-              <Field label="它负责什么"><textarea rows={3} value={draft.description} placeholder="一句话说明它应该回答哪类问题" onChange={(event) => update((value) => { value.description = event.target.value; })} /></Field>
-            </div>
-            <details className="agent-advanced">
-              <summary>高级设置 <span>模型、提示词与自动选择</span></summary>
-              <div className="agent-config-stack">
-                <Field label="模型">
-                  <select value={draft.extension.modelId || "__custom"} onChange={(event) => update((value) => {
-                    if (event.target.value === "__custom") {
-                      value.extension.modelId = undefined;
-                      return;
-                    }
-                    const model = props.models.find((item) => item.id === event.target.value);
-                    if (!model) return;
-                    value.extension.modelId = model.id;
-                    value.extension.provider = model.provider;
-                    value.extension.avatar = { kind: "provider", provider: model.provider };
-                    value.model.name = model.model;
-                  })}>
-                    {props.models.map((model) => <option key={model.id} value={model.id}>{model.displayName} · {model.provider}</option>)}
-                    <option value="__custom">目录外模型…</option>
-                  </select>
-                  {draft.extension.modelId && <span className="model-reference">引用“设置 → 模型” · {draft.extension.provider} / {draft.model.name}</span>}
-                </Field>
-                {!draft.extension.modelId && (
-                  <details className="custom-model-settings" open>
-                    <summary>目录外模型 <span>仅在目录没有目标模型时使用</span></summary>
-                    <div className="custom-model-fields">
-                      <Field label="Provider">
-                        <select value={draft.extension.provider} onChange={(event) => update((value) => {
-                          const provider = event.target.value as ProviderId;
-                          value.extension.provider = provider;
-                          value.extension.avatar = { kind: "provider", provider };
-                        })}>
-                          <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="deepseek">DeepSeek</option>
-                        </select>
-                      </Field>
-                      <Field label="模型 ID"><input placeholder="openrouter/auto" value={draft.model.name} onChange={(event) => update((value) => { value.model.name = event.target.value; })} /></Field>
-                    </div>
-                  </details>
-                )}
-                <Field label="类型">
-                  <select value={draft.extension.role} onChange={(event) => update((value) => { value.extension.role = event.target.value as "worker" | "synthesizer"; })}>
-                    <option value="worker">回答 Agent</option><option value="synthesizer">聚合 Agent</option>
-                  </select>
-                </Field>
-                <Field label="技术 ID"><input value={draft.id} onChange={(event) => update((value) => { value.id = event.target.value; })} disabled={Boolean(selected)} /></Field>
-              </div>
-              <Field label="系统提示词"><textarea className="prompt-editor" rows={6} value={draft.systemPrompt} onChange={(event) => update((value) => { value.systemPrompt = event.target.value; })} /></Field>
-              <Field label="自动选择关键词（逗号分隔）"><input value={draft.extension.selection.intents.join(", ")} onChange={(event) => update((value) => { value.extension.selection.intents = splitList(event.target.value); value.extension.selection.tags = splitList(event.target.value); })} /></Field>
-            </details>
-            <div className="editor-footer">
-              <span>其余安全与运行参数使用稳定默认值。</span>
-              <button className="primary-button" onClick={save}>保存 Agent</button>
-            </div>
-          </section>
-        )}
-      </div>
-    </>
+        </section>
+      </>
+    );
+  }
+
+  return (
+    <div className="agent-editor-view">
+      <PageTitle
+        eyebrow="Agent detail"
+        title={draft.extension.displayName || "新建 Agent"}
+        description="先完成名称和职责；模型、提示词与自动选择规则按需展开。"
+        aside={<button className="secondary-button" onClick={() => { setSelectedId(undefined); setDraft(undefined); }}>← 返回列表</button>}
+      />
+      <section className="agent-editor panel" aria-label={`${draft.extension.displayName || "未命名 Agent"} 详细配置`}>
+        <div className="editor-title">
+          <div className="agent-editor-identity"><ProviderIcon provider={draft.extension.avatar.provider} size="large" label={`${draft.extension.displayName || "未命名 Agent"} 头像`} /><div><span className="eyebrow">详细配置</span><h2>{draft.extension.displayName || "未命名 Agent"}</h2></div></div>
+        </div>
+        {!draft.valid && <div className="validation-box">{draft.issues.map((issue) => <p key={issue.code}>{issue.code} · {issue.message}</p>)}</div>}
+        <div className="agent-basic-fields">
+          <Field label="名称"><input autoFocus value={draft.extension.displayName} placeholder="例如：技术顾问" onChange={(event) => update((value) => { value.extension.displayName = event.target.value; })} /></Field>
+          <Field label="它负责什么"><textarea rows={3} value={draft.description} placeholder="一句话说明它应该回答哪类问题" onChange={(event) => update((value) => { value.description = event.target.value; })} /></Field>
+        </div>
+        <details className="agent-advanced">
+          <summary>高级设置 <span>模型、提示词与自动选择</span></summary>
+          <div className="agent-config-stack">
+            <Field label="模型">
+              <select value={draft.extension.modelId || "__custom"} onChange={(event) => update((value) => {
+                if (event.target.value === "__custom") {
+                  value.extension.modelId = undefined;
+                  return;
+                }
+                const model = props.models.find((item) => item.id === event.target.value);
+                if (!model) return;
+                value.extension.modelId = model.id;
+                value.extension.provider = model.provider;
+                value.extension.avatar = { kind: "provider", provider: model.provider };
+                value.model.name = model.model;
+              })}>
+                {props.models.map((model) => <option key={model.id} value={model.id}>{model.displayName} · {model.provider}</option>)}
+                <option value="__custom">目录外模型…</option>
+              </select>
+              {draft.extension.modelId && <span className="model-reference">引用“设置 → 模型” · {draft.extension.provider} / {draft.model.name}</span>}
+            </Field>
+            {!draft.extension.modelId && (
+              <details className="custom-model-settings" open>
+                <summary>目录外模型 <span>仅在目录没有目标模型时使用</span></summary>
+                <div className="custom-model-fields">
+                  <Field label="Provider">
+                    <select value={draft.extension.provider} onChange={(event) => update((value) => {
+                      const provider = event.target.value as ProviderId;
+                      value.extension.provider = provider;
+                      value.extension.avatar = { kind: "provider", provider };
+                    })}>
+                      <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="deepseek">DeepSeek</option>
+                    </select>
+                  </Field>
+                  <Field label="模型 ID"><input placeholder="openrouter/auto" value={draft.model.name} onChange={(event) => update((value) => { value.model.name = event.target.value; })} /></Field>
+                </div>
+              </details>
+            )}
+            <Field label="类型">
+              <select value={draft.extension.role} onChange={(event) => update((value) => { value.extension.role = event.target.value as "worker" | "synthesizer"; })}>
+                <option value="worker">回答 Agent</option><option value="synthesizer">聚合 Agent</option>
+              </select>
+            </Field>
+            <Field label="技术 ID"><input value={draft.id} onChange={(event) => update((value) => { value.id = event.target.value; })} disabled={Boolean(selected)} /></Field>
+          </div>
+          <Field label="系统提示词"><textarea className="prompt-editor" rows={6} value={draft.systemPrompt} onChange={(event) => update((value) => { value.systemPrompt = event.target.value; })} /></Field>
+          <Field label="自动选择关键词（逗号分隔）"><input value={draft.extension.selection.intents.join(", ")} onChange={(event) => update((value) => { value.extension.selection.intents = splitList(event.target.value); value.extension.selection.tags = splitList(event.target.value); })} /></Field>
+        </details>
+        <div className="editor-footer">
+          <span>其余安全与运行参数使用稳定默认值。</span>
+          <button className="primary-button" onClick={save}>保存 Agent</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
