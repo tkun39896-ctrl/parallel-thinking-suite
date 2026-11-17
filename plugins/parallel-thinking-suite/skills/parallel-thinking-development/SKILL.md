@@ -7,6 +7,12 @@ description: 为 Parallel Thinking Suite 插件的实现、修复、重构、测
 
 用同一条安全开发链路维护本仓库，不把产品 Skill 的模型调用能力带入开发验证。
 
+## 本地运行前置条件
+
+在执行下文的 CLI 或构建命令前，运行 `node --version`，确认使用 Node.js 24 或更新的受支持版本。若默认 `node` 版本过旧，选择已安装的兼容 Node 可执行文件，并在本次命令中使用其绝对路径（或仅为该次命令设置 PATH）；不要修改全局 shell 配置。后文的 `node` 均指这个已核实的运行时。
+
+插件根目录需要存在 `dist/cli.mjs` 和已安装的 `node_modules`。缺失时按[插件 README](../../README.md)在规范源码目录执行 `npm ci` 与 `npm run build`，并让 npm 使用同一兼容 Node。不要在运行前跳过构建，也不要把依赖或构建产物写入用户的运行数据目录。
+
 ## 开始
 
 1. 完整读取仓库根目录 `AGENTS.md` 指定的交接稿、README、架构与解析器治理文档。
