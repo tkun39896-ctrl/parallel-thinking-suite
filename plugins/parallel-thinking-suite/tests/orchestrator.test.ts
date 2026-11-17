@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -225,4 +225,42 @@ describe("parallel orchestration", () => {
     expect(archive).not.toContain("openrouter-orchestrator-secret");
     expect(archive).toContain("[REDACTED]");
   });
+});
+
+
+it("does not expose an active run through another project's root", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => sse([{ choices: [{ delta: { content: "ok" } }] }, "[DONE]"])));
+  const orchestrator = new Orchestrator();
+  const run = orchestrator.createRun({ query: "test", projectRoot: project, selection: { mode: "explicit", agentIds: ["product-strategist"] } });
+  const otherProject = mkdtempSync(join(tmpdir(), "parallel-thinking-other-project-"));
+  expect(() => orchestrator.getRun(run.id, otherProject)).toThrow();
+  await waitForTerminal(orchestrator, run.id, project);
+});
+
+it("rejects invalid native status before changing archived state", async () => {
+  const orchestrator = new Orchestrator();
+  const plan = await orchestrator.createNativeRun({ query: "test", projectRoot: project, selection: { mode: "explicit", agentIds: ["product-strategist"] }, execution: { host: "codex" } });
+  expect(() => orchestrator.recordNativeResult(plan.manifest.id, project, { agentId: "product-strategist", status: "running" as never })).toThrow();
+  expect(orchestrator.getRun(plan.manifest.id, project).agents["product-strategist"]?.status).toBe("queued");
+});
+
+it("redacts native events before delivering them to live listeners", async () => {
+  const orchestrator = new Orchestrator();
+  const plan = await orchestrator.createNativeRun({ query: "test", projectRoot: project, selection: { mode: "explicit", agentIds: ["product-strategist"] }, execution: { host: "codex" } });
+  const seen: unknown[] = [];
+  const unsubscribe = orchestrator.subscribe(plan.manifest.id, event => seen.push(event));
+  try {
+    orchestrator.recordNativeResult(plan.manifest.id, project, { agentId: "product-strategist", status: "completed", output: `echo ${process.env.OPENROUTER_API_KEY}` });
+    expect(JSON.stringify(seen)).not.toContain(process.env.OPENROUTER_API_KEY!);
+    expect(JSON.stringify(seen)).toContain("[REDACTED]");
+  } finally { unsubscribe(); }
+});
+
+
+it("rejects invalid concurrency before creating a background run", () => {
+  const paths = ensureProject(project);
+  writeFileSync(paths.config, "concurrency:\n  global: -1\n  perProvider: 2\n");
+  const orchestrator = new Orchestrator();
+  expect(() => orchestrator.createRun({ query: "test", projectRoot: project })).toThrow("concurrency");
+  expect(orchestrator.listRuns(project)).toEqual([]);
 });

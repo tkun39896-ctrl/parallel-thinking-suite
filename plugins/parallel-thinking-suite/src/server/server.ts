@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { URL } from "node:url";
@@ -10,6 +10,7 @@ import { ModelCatalogRepository } from "./models.js";
 import { Orchestrator } from "./orchestrator.js";
 import { collectFiles, ParserRegistry } from "./parsers.js";
 import { providerStatuses, testProvider } from "./providers.js";
+import { redactSecrets } from "./run-store.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env.PARALLEL_THINK_PORT || 4317);
@@ -24,7 +25,7 @@ function json(response: ServerResponse, status: number, value: unknown): void {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });
-  response.end(JSON.stringify(value));
+  response.end(JSON.stringify(redactSecrets(value)));
 }
 
 async function readJson<T>(request: IncomingMessage): Promise<T> {
@@ -47,9 +48,19 @@ function projectRoot(url: URL): string | undefined {
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url || "/", `http://${host}:${port}`);
   const method = request.method || "GET";
+  let trusted = false;
+  try {
+    const authority = new URL(`http://${request.headers.host}`);
+    trusted = ["127.0.0.1", "localhost", "[::1]"].includes(authority.hostname)
+      && (!request.headers.origin || new URL(request.headers.origin).origin === authority.origin);
+  } catch { /* Reject malformed Host/Origin values. */ }
+  if (!trusted) {
+    json(response, 403, { error: { code: "FORBIDDEN", message: "只接受本机同源请求" } });
+    return;
+  }
 
   if (method === "GET" && url.pathname === "/api/health") {
-    json(response, 200, { ok: true, service: "parallel-thinking-suite", home, version: "0.1.0" });
+    json(response, 200, { ok: true, service: "parallel-thinking-suite", home, version: JSON.parse(readFileSync(join(pluginRoot, "package.json"), "utf8")).version });
     return;
   }
   if (method === "GET" && url.pathname === "/api/providers") {
@@ -106,13 +117,14 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const eventsMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/events$/);
   if (method === "GET" && eventsMatch) {
     const runId = eventsMatch[1]!;
+    const snapshot = orchestrator.getRun(runId, projectRoot(url));
     response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
-    response.write(`event: snapshot\ndata: ${JSON.stringify(orchestrator.getRun(runId, projectRoot(url)))}\n\n`);
+    response.write(`event: snapshot\ndata: ${JSON.stringify(redactSecrets(snapshot))}\n\n`);
     const unsubscribe = orchestrator.subscribe(runId, (event) => {
       response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     });
@@ -125,20 +137,20 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   }
   const cancelMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/cancel$/);
   if (method === "POST" && cancelMatch) {
-    json(response, 200, orchestrator.cancel(cancelMatch[1]!));
+    json(response, 200, orchestrator.cancel(cancelMatch[1]!, projectRoot(url)));
     return;
   }
   const retryMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/retry$/);
   if (method === "POST" && retryMatch) {
     const body = await readJson<{ projectRoot?: string }>(request);
-    json(response, 202, orchestrator.retryFailed(retryMatch[1]!, body.projectRoot));
+    json(response, 202, orchestrator.retryFailed(retryMatch[1]!, body.projectRoot || projectRoot(url)));
     return;
   }
   const nativeResultMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/native-result$/);
   if (method === "POST" && nativeResultMatch) {
     const body = await readJson<{ projectRoot?: string; result: NativeAgentResultSubmission }>(request);
     if (!body.result) throw new Error("result 不能为空");
-    json(response, 200, orchestrator.recordNativeResult(nativeResultMatch[1]!, body.projectRoot, body.result));
+    json(response, 200, orchestrator.recordNativeResult(nativeResultMatch[1]!, body.projectRoot || projectRoot(url), body.result));
     return;
   }
   const contextMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/context$/);
@@ -149,7 +161,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const aggregateMatch = url.pathname.match(/^\/api\/runs\/([a-zA-Z0-9_-]+)\/aggregate$/);
   if (method === "POST" && aggregateMatch) {
     const body = await readJson<{ projectRoot?: string }>(request);
-    json(response, 200, await orchestrator.aggregateWithAgent(aggregateMatch[1]!, body.projectRoot));
+    json(response, 200, await orchestrator.aggregateWithAgent(aggregateMatch[1]!, body.projectRoot || projectRoot(url)));
     return;
   }
 

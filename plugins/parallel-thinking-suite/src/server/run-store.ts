@@ -18,13 +18,24 @@ function secretValues(): string[] {
 }
 
 export function redactSecrets<T>(value: T): T {
-  const serialized = JSON.stringify(value);
-  let redacted = serialized;
-  for (const secret of secretValues()) redacted = redacted.split(secret).join("[REDACTED]");
-  redacted = redacted
-    .replace(/sk-[A-Za-z0-9_-]{16,}/g, "[REDACTED_KEY]")
-    .replace(/(?:api[_-]?key)["'\s:=]+[A-Za-z0-9_-]{16,}/gi, "api-key=[REDACTED_KEY]");
-  return JSON.parse(redacted) as T;
+  const secrets = secretValues();
+  const redactText = (text: string): string => {
+    for (const secret of secrets) text = text.split(secret).join("[REDACTED]");
+    return text.replace(/sk-[A-Za-z0-9_-]{16,}/g, "[REDACTED_KEY]")
+      .replace(/(?:api[_-]?key)["'\s:=]+[A-Za-z0-9_-]{16,}/gi, "api-key=[REDACTED_KEY]");
+  };
+  const visit = (item: unknown, key = ""): unknown => {
+    if (typeof item === "string") {
+      if (/^api[_-]?key$/i.test(key) && item.length >= 16) return "[REDACTED_KEY]";
+      return redactText(item);
+    }
+    if (Array.isArray(item)) return item.map(value => visit(value));
+    if (item && typeof item === "object") return Object.fromEntries(
+      Object.entries(item).map(([name, value]) => [redactText(name), visit(value, name)]),
+    );
+    return item;
+  };
+  return visit(value) as T;
 }
 
 export class RunStore {

@@ -74,8 +74,13 @@ export function validateParallelThinkingExtension(
   if (!providers.has(ext.provider as ProviderId)) {
     issues.push({ code: "E_PT_PROVIDER", message: "provider must be openai, anthropic, deepseek, or openrouter", level: "error", path: "parallelThinking.provider" });
   }
+  if (typeof ext.enabled !== "boolean") issues.push({ code: "E_PT_ENABLED", message: "enabled must be boolean", level: "error" });
+  const knowledge = ext.knowledge as Record<string, unknown> | undefined;
+  if (!knowledge || !["auto", "on", "off"].includes(String(knowledge.sharedMode)) || !arrayOfStrings(knowledge.sharedCollections) || !arrayOfStrings(knowledge.privatePaths)) {
+    issues.push({ code: "E_PT_KNOWLEDGE", message: "knowledge requires a valid sharedMode and string-array paths", level: "error" });
+  }
   const avatar = ext.avatar as Record<string, unknown> | undefined;
-  if (avatar !== undefined && (avatar.kind !== "provider" || !providers.has(avatar.provider as ProviderId))) {
+  if (avatar !== undefined && (!avatar || avatar.kind !== "provider" || !providers.has(avatar.provider as ProviderId))) {
     issues.push({ code: "E_PT_AVATAR", message: "avatar must reference a supported provider", level: "error", path: "parallelThinking.avatar" });
   }
   if (ext.modelId !== undefined && (typeof ext.modelId !== "string" || !/^[a-z0-9-]+$/.test(ext.modelId))) {
@@ -90,12 +95,15 @@ export function validateParallelThinkingExtension(
       issues.push({ code: "E_PT_SELECTION", message: `${key} must be a string array`, level: "error", path: `parallelThinking.selection.${key}` });
     }
   }
+  if (!selection || typeof selection.includeInParallel !== "boolean" || typeof selection.priority !== "number" || !Number.isFinite(selection.priority)) {
+    issues.push({ code: "E_PT_SELECTION", message: "includeInParallel must be boolean and priority finite", level: "error" });
+  }
   const context = ext.context as Record<string, unknown> | undefined;
   if (!context || !contextModes.has(String(context.defaultMode))) {
     issues.push({ code: "E_PT_CONTEXT", message: "defaultMode is invalid", level: "error", path: "parallelThinking.context.defaultMode" });
   }
   const limits = ext.limits as Record<string, unknown> | undefined;
-  if (!limits || !Number.isInteger(limits.firstTokenTimeoutMs) || !Number.isInteger(limits.totalTimeoutMs)) {
+  if (!limits || !Number.isInteger(limits.firstTokenTimeoutMs) || !Number.isInteger(limits.totalTimeoutMs) || Number(limits.firstTokenTimeoutMs) <= 0 || Number(limits.totalTimeoutMs) <= 0) {
     issues.push({ code: "E_PT_LIMITS", message: "timeouts must be integer milliseconds", level: "error", path: "parallelThinking.limits" });
   }
   return issues;
@@ -192,19 +200,21 @@ export class AgentDefinitionRepository {
       ...(draft.model.temperature === undefined ? {} : { temperature: draft.model.temperature }),
       ...(draft.model.maxTokens === undefined ? {} : { maxTokens: draft.model.maxTokens }),
     };
+    const existingPath = join(this.root, `${id}.agent.md`);
+    const existing = existsSync(existingPath) ? loadAgentFromDisk(existingPath) : undefined;
+    const profiles = { ...existing?.frontmatter.profiles?.profiles };
+    profiles[profile] = { ...profiles[profile], skills: profiles[profile]?.skills || [] };
+    if (existing && JSON.stringify(loadAgent(existing, profile).model) !== JSON.stringify(model)) profiles[profile] = { ...profiles[profile], model };
     const frontmatter: Record<string, unknown> = {
       schemaVersion: "1",
       version: draft.version || "1.0.0",
       name: id,
       description: draft.description,
-      model,
-      profiles: {
-        default: profile,
-        [profile]: { skills: [] },
-      },
+      model: existing?.frontmatter.model || model,
+      profiles: { default: profile, ...profiles },
     };
     const md = `---\n${stringify(frontmatter).trim()}\n---\n\n${draft.systemPrompt.trim()}\n`;
-    const ext = stringify({ parallelThinking: draft.extension });
+    const ext = stringify({ ...existing?.extensions, parallelThinking: draft.extension });
     const finalMd = join(this.root, `${id}.agent.md`);
     const finalExt = join(this.root, `${id}.agent.ext.yaml`);
     const tempId = `.${id}.${process.pid}.${Date.now()}`;

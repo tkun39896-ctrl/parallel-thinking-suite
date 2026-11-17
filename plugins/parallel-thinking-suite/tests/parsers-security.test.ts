@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ensureProject } from "../src/server/config.js";
-import { ParserRegistry } from "../src/server/parsers.js";
+import { collectFiles, ParserRegistry } from "../src/server/parsers.js";
 import { redactSecrets, RunStore } from "../src/server/run-store.js";
 
 let home: string;
@@ -93,4 +93,41 @@ describe("run archive secret redaction", () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
   });
+});
+
+
+it("redacts structured api_key fields without corrupting JSON", () => {
+  expect(redactSecrets({ api_key: "abcdefghijklmnopqrstuv", nested: ["api_key=abcdefghijklmnopqrstuv"] })).toEqual({ api_key: "[REDACTED_KEY]", nested: ["api-key=[REDACTED_KEY]"] });
+});
+
+it("keeps the requested source path when identical files share a parse cache", async () => {
+  const registry = new ParserRegistry(join(home, "parsers"));
+  const first = join(project, "first.md"), second = join(project, "second.md");
+  writeFileSync(first, "identical"); writeFileSync(second, "identical");
+  await registry.parse(first, ensureProject(project));
+  const result = await registry.parse(second, ensureProject(project));
+  expect(result?.cached).toBe(true);
+  expect(result?.sourcePath).toBe(second);
+});
+
+it("selects numeric semantic versions rather than lexical order", async () => {
+  for (const [id, version] of [["older", "1.9.0"], ["newer", "1.10.0"]]) {
+    const root = join(home, "parsers", id!, version!); mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "manifest.yaml"), `id: ${id}\nversion: ${version}\nextensions: [.txt]\nentry: index.mjs\n`);
+    writeFileSync(join(root, "index.mjs"), `console.log(JSON.stringify({text: ${JSON.stringify(version)}}));`);
+  }
+  const registry = new ParserRegistry(join(home, "parsers"));
+  await registry.canaryAndActivate("older", "1.9.0", []);
+  await registry.canaryAndActivate("newer", "1.10.0", []);
+  expect(registry.activeFor("sample.txt")?.id).toBe("newer");
+});
+
+
+it("does not follow directory symlinks outside knowledge roots or into cycles", () => {
+  const root = join(project, "knowledge"); mkdirSync(root);
+  writeFileSync(join(root, "allowed.md"), "allowed");
+  const outside = join(project, "outside"); mkdirSync(outside);
+  writeFileSync(join(outside, "private.md"), "outside configured roots");
+  symlinkSync(outside, join(root, "linked")); symlinkSync(root, join(root, "cycle"));
+  expect(collectFiles([root])).toEqual([join(root, "allowed.md")]);
 });

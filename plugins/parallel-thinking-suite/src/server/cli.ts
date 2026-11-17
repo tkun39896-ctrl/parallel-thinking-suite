@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   if (command === "run") {
     const raw = await stdin();
     const input = JSON.parse(raw || "{}");
-    const providerInput = { ...input, execution: { mode: "provider" } };
+    const providerInput = { ...input, projectRoot: input.projectRoot || process.cwd(), execution: { mode: "provider" } };
     const manifest = await requestJson("/api/runs", { method: "POST", body: JSON.stringify(providerInput) });
     const projectRoot = String(manifest.projectRoot || input.projectRoot || process.cwd());
     process.stdout.write(JSON.stringify({
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     if (!host) throw new Error("plan-native 需要 execution.host 或 --host");
     const plan = await requestJson("/api/runs/native", {
       method: "POST",
-      body: JSON.stringify({ ...input, execution: { mode: "host-native", host } }),
+      body: JSON.stringify({ ...input, projectRoot: input.projectRoot || process.cwd(), execution: { mode: "host-native", host } }),
     });
     const manifest = plan.manifest;
     const projectRoot = String(manifest.projectRoot || input.projectRoot || process.cwd());

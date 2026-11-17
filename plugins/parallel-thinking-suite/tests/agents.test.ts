@@ -156,3 +156,25 @@ describe("Agent selection", () => {
     expect(automatic.every((agent) => agent.extension.role === "worker")).toBe(true);
   });
 });
+
+
+it("preserves named profiles when editing an existing Agent", () => {
+  seedExampleAgents();
+  const repository = new AgentDefinitionRepository(join(home, "agents"));
+  const original = repository.getAgent("technology-architect");
+  repository.saveAgent({ ...original, description: "Edited description" });
+  expect(repository.buildProductionSnapshot("technology-architect", "review").definition.model).toMatchObject({ temperature: 0.15 });
+});
+
+it("rejects malformed knowledge and timeout fields before persisting an Agent", () => {
+  seedExampleAgents();
+  const repository = new AgentDefinitionRepository(join(home, "agents"));
+  const original = repository.getAgent("technology-architect");
+  const before = readFileSync(join(home, "agents", "technology-architect.agent.ext.yaml"), "utf8");
+  for (const extension of [
+    { ...original.extension, knowledge: { ...original.extension.knowledge, privatePaths: "not-an-array" } },
+    { ...original.extension, limits: { firstTokenTimeoutMs: -1, totalTimeoutMs: 0 } },
+    { ...original.extension, enabled: "false" },
+  ]) expect(() => repository.saveAgent({ ...original, extension: extension as never })).toThrow();
+  expect(readFileSync(join(home, "agents", "technology-architect.agent.ext.yaml"), "utf8")).toBe(before);
+});

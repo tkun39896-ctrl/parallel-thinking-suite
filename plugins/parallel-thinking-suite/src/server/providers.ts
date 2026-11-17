@@ -229,8 +229,8 @@ async function streamOpenAI(options: StreamAgentOptions, signal: AbortSignal): P
         totalTokens: Number(value.response.usage.total_tokens || 0),
       });
     }
-    if (value.type === "response.failed") {
-      throw new ProviderError(String(value.response?.error?.message || "OpenAI 生成失败"));
+    if (["response.failed", "response.incomplete", "error"].includes(value.type)) {
+      throw new ProviderError(String(value.response?.error?.message || value.response?.incomplete_details?.reason || value.message || "OpenAI 生成失败"));
     }
   });
 }
@@ -293,6 +293,7 @@ async function streamDeepSeek(options: StreamAgentOptions, signal: AbortSignal):
   await parseSse(response.body, (_event, data) => {
     if (data === "[DONE]") return;
     const value = JSON.parse(data) as Record<string, any>;
+    if (value.error) throw new ProviderError(redactSecrets(String(value.error.message || "DeepSeek 生成失败")));
     const delta = value.choices?.[0]?.delta?.content;
     if (typeof delta === "string" && delta) options.onDelta(delta);
     if (value.usage) {

@@ -3,14 +3,14 @@ models:
     displayName: GPT-5.6 Sol
     provider: openai
     model: gpt-5.6-sol
-    description: OpenAI 当前旗舰通用与 Agent 模型。
+    description: OpenAI 通用与 Agent 模型示例；确认日期不保证当前账户可用。
     verifiedAt: "2026-09-02"
     sourceUrl: https://developers.openai.com/api/docs/models
   - id: anthropic-flagship
     displayName: Claude Fable 5.1
     provider: anthropic
     model: claude-fable-5-1
-    description: Anthropic 面向高强度推理与长程 Agent 工作的最高能力模型。
+    description: Anthropic 推理与长程 Agent 模型示例；使用前核对官方目录与账户可用性。
     verifiedAt: "2026-09-02"
     sourceUrl: https://platform.claude.com/docs/en/models/overview
   - id: deepseek-flagship

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  lstatSync,
   readFileSync,
   realpathSync,
   readdirSync,
@@ -68,7 +69,7 @@ export class ParserRegistry {
 
   list(): ParserRecord[] {
     return [...this.records.values()]
-      .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id) || b.version.localeCompare(a.version))
+      .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id) || compareVersions(b.version, a.version))
       .map(({ entry: _entry, root: _root, ...record }) => record);
   }
 
@@ -172,7 +173,7 @@ export class ParserRegistry {
       }
       const previous = [...this.records.values()]
         .filter((item) => item.id === id && item.kind === "extension" && item.status === "active" && item.version !== version)
-        .sort((a, b) => b.version.localeCompare(a.version))[0];
+        .sort((a, b) => compareVersions(b.version, a.version))[0];
       if (previous) {
         previous.status = "deprecated";
         record.previousStableVersion = previous.version;
@@ -201,7 +202,7 @@ export class ParserRegistry {
     const extension = normalizeExtension(extname(filePath));
     const extensionParser = [...this.records.values()]
       .filter((record) => record.kind === "extension" && record.status === "active" && record.extensions.includes(extension))
-      .sort((a, b) => b.version.localeCompare(a.version))[0];
+      .sort((a, b) => compareVersions(b.version, a.version))[0];
     if (extensionParser) return extensionParser;
     return [...this.records.values()].find((record) =>
       record.kind === "builtin" && record.status === "active" && record.extensions.includes(extension)
@@ -218,7 +219,7 @@ export class ParserRegistry {
       parser.cacheHits += 1;
       parser.lastUsedAt = new Date().toISOString();
       this.persist();
-      return { ...(JSON.parse(readFileSync(cachePath, "utf8")) as ParsedDocument), cached: true };
+      return { ...(JSON.parse(readFileSync(cachePath, "utf8")) as ParsedDocument), sourcePath: filePath, cached: true };
     }
     const started = Date.now();
     try {
@@ -285,7 +286,7 @@ export class ParserRegistry {
       });
       let stdout = "";
       let stderr = "";
-      const timer = setTimeout(() => child.kill(), 15_000);
+      const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
       child.stdout.on("data", (chunk) => { stdout += String(chunk); });
       child.stderr.on("data", (chunk) => { stderr += String(chunk); });
       child.on("error", reject);
@@ -356,6 +357,15 @@ export class ParserRegistry {
   }
 }
 
+function compareVersions(left: string, right: string): number {
+  const a = left.split(".").map(Number), b = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = a[index]! - b[index]!;
+    if (difference) return difference;
+  }
+  return 0;
+}
+
 function normalizeExtension(extension: string): string {
   const lower = extension.toLowerCase();
   return lower.startsWith(".") ? lower : `.${lower}`;
@@ -423,7 +433,8 @@ export function collectFiles(roots: string[], limit = 500): string[] {
   const ignored = new Set([".git", "node_modules", ".parallel-think"]);
   const visit = (path: string) => {
     if (output.length >= limit || !existsSync(path)) return;
-    const stats = statSync(path);
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink()) return;
     if (stats.isFile()) {
       output.push(path);
       return;

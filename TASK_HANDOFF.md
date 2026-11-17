@@ -1,6 +1,8 @@
-# Parallel Thinking Suite：OpenRouter 改造与素材包实验
+# Parallel Thinking Suite：OpenRouter 改造与素材包实验（历史交接）
 
-## 任务目标
+此文保留最初实验背景，不表示当前执行授权或最新分支。持续维护分支为 `codex/parallel-thinking-v0.1.0`；当前开发、验证与发布约束以 `AGENTS.md` 和插件 README 为准。
+
+## 原任务目标
 
 先把本仓库作为独立的本地 Codex 项目维护，不要把当前版本直接安装进 `oss-traffic-ops`。
 
@@ -12,7 +14,7 @@
 4. 代码稳定后，在本仓库内重新使用 Skills Auditor 生成安装计划、等待批准、安装并验证两个 Skill。
 5. 使用“素材包与研究问题”进行一次真实的多模型并行实验，再聚合比较答案质量。
 
-## 当前状态
+## 原交接时的状态（历史记录）
 
 - 上游仓库：`tkun39896-ctrl/parallel-thinking-suite`
 - 克隆时提交：`7357df77a2f7e6440495d4cbea0f603e09005f1b`

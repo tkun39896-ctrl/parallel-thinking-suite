@@ -1,3 +1,4 @@
+import { get as httpGet } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
@@ -142,4 +143,32 @@ describe("local HTTP service", () => {
     expect(missing.status).toBe(404);
     expect(await missing.json()).toEqual({ error: { code: "NOT_FOUND", message: "接口不存在" } });
   });
+});
+
+
+it("rejects cross-origin and non-loopback Host requests before routing", async () => {
+  const crossOrigin = await fetch(`${origin}/api/agents`, { headers: { origin: "https://untrusted.example" } });
+  expect(crossOrigin.status).toBe(403);
+  const status = await new Promise<number | undefined>((resolve, reject) => {
+    httpGet(`${origin}/api/health`, { headers: { host: "untrusted.example" } }, response => {
+      response.resume(); resolve(response.statusCode);
+    }).on("error", reject);
+  });
+  expect(status).toBe(403);
+});
+
+
+it("retains projectRoot from a browser action query when its JSON body is empty", async () => {
+  const draft = {
+    id: "project-reviewer", description: "Synthetic reviewer", systemPrompt: "Return a public answer.", model: { name: "inherited" },
+    extension: { displayName: "Reviewer", enabled: true, provider: "openrouter", role: "worker", avatar: { kind: "provider", provider: "openrouter" }, selection: { includeInParallel: true, tags: [], intents: [], negativeHints: [], priority: 50 }, knowledge: { sharedMode: "off", sharedCollections: [], privatePaths: [] }, context: { defaultMode: "summary" }, limits: { firstTokenTimeoutMs: 1000, totalTimeoutMs: 3000 } },
+  };
+  const save = await fetch(`${origin}/api/agents/project-reviewer`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(draft) });
+  expect(save.status).toBe(200);
+  const created = await fetch(`${origin}/api/runs/native`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "synthetic", projectRoot: projectA, execution: { host: "codex" } }) });
+  expect(created.status).toBe(202);
+  const plan = await created.json() as { manifest: { id: string } };
+  const result = await fetch(`${origin}/api/runs/${plan.manifest.id}/aggregate?projectRoot=${encodeURIComponent(projectA)}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  expect(result.status).toBe(400);
+  expect(await result.json()).toMatchObject({ error: { message: "没有已启用的聚合 Agent" } });
 });

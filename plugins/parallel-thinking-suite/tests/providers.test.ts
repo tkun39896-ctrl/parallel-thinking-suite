@@ -207,3 +207,12 @@ describe("provider streaming adapters", () => {
     expect(output).toBe("ok");
   });
 });
+
+
+it.each(["openai", "deepseek"] as const)("fails %s error events rather than reporting an empty success", async provider => {
+  process.env[provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY"] = "test-provider-secret-000000";
+  vi.stubGlobal("fetch", vi.fn(async () => sse([{ data: provider === "openai"
+    ? { type: "response.incomplete", response: { incomplete_details: { reason: "max_output_tokens" } } }
+    : { error: { message: "upstream failed", code: 400 } } }])));
+  await expect(streamAgent({ agent: agent(provider), task: "test", contextPackage: "", signal: new AbortController().signal, onDelta: () => undefined, onUsage: () => undefined })).rejects.toThrow();
+});

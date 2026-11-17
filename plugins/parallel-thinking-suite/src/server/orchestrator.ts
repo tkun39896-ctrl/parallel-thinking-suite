@@ -17,7 +17,7 @@ import { ensureProject, type ProjectPaths } from "./config.js";
 import { buildKnowledgePackage } from "./knowledge.js";
 import { ParserRegistry } from "./parsers.js";
 import { streamAgent } from "./providers.js";
-import { RunStore } from "./run-store.js";
+import { redactSecrets, RunStore } from "./run-store.js";
 
 type EventListener = (event: RunEvent) => void;
 
@@ -47,6 +47,7 @@ interface ActiveRun {
   store: RunStore;
   controller: AbortController;
   sequence: number;
+  concurrency: { global: number; perProvider: number };
 }
 
 export class Orchestrator {
@@ -98,12 +99,21 @@ export class Orchestrator {
     projectRoot: string | undefined,
     submission: NativeAgentResultSubmission,
   ): RunManifest {
+    if (!submission || typeof submission.agentId !== "string" || !["completed", "failed", "cancelled"].includes(submission.status)) {
+      throw new Error("原生结果必须包含有效 agentId 和终态 status");
+    }
+    for (const key of ["output", "error", "resolvedModel", "startedAt", "completedAt"] as const) {
+      if (submission[key] !== undefined && typeof submission[key] !== "string") throw new Error(`原生结果 ${key} 必须是字符串`);
+    }
+    if (submission.usage !== undefined && (!submission.usage || typeof submission.usage !== "object" || Array.isArray(submission.usage) || Object.values(submission.usage).some(value => typeof value !== "number" || !Number.isFinite(value) || value < 0))) {
+      throw new Error("原生结果 usage 必须包含非负有限数值");
+    }
     const paths = ensureProject(projectRoot);
     const store = new RunStore(paths);
     const resolved = store.resolveRunId(runId);
     const manifest = store.get(resolved);
     if (manifest.executionMode !== "host-native") throw new Error("该运行不是宿主原生运行");
-    const result = manifest.agents[submission.agentId];
+    const result = Object.hasOwn(manifest.agents, submission.agentId) ? manifest.agents[submission.agentId] : undefined;
     if (!result) throw new Error(`运行中不存在 Agent：${submission.agentId}`);
     if (result.completedAt && ["completed", "failed", "cancelled"].includes(result.status)) return manifest;
 
@@ -163,6 +173,11 @@ export class Orchestrator {
     if (!query) throw new Error("query 不能为空");
     const paths = ensureProject(request.projectRoot);
     const store = new RunStore(paths);
+    const config = parseYaml(readFileSync(paths.config, "utf8")) as { concurrency?: { global?: unknown; perProvider?: unknown } } | null;
+    const concurrency = { global: config?.concurrency?.global ?? 6, perProvider: config?.concurrency?.perProvider ?? 2 };
+    for (const [key, value] of Object.entries(concurrency)) {
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) throw new Error(`concurrency.${key} 必须为正整数`);
+    }
     const mode = request.selection?.mode || "auto";
     const selected = selectAgents(this.agents.listAgents(), query, mode, request.selection?.agentIds);
     if (selected.length === 0) throw new Error("没有符合条件且配置有效的 Agent");
@@ -211,13 +226,14 @@ export class Orchestrator {
       store,
       controller: new AbortController(),
       sequence: 0,
+      concurrency: concurrency as { global: number; perProvider: number },
     };
     return { run, selected };
   }
 
   getRun(runId: string, projectRoot?: string): RunManifest {
     const active = this.activeRuns.get(runId);
-    if (active) return active.manifest;
+    if (active && active.paths.root === ensureProject(projectRoot).root) return redactSecrets(active.manifest);
     return new RunStore(ensureProject(projectRoot)).get(runId);
   }
 
@@ -225,9 +241,9 @@ export class Orchestrator {
     return new RunStore(ensureProject(projectRoot)).list();
   }
 
-  cancel(runId: string): RunManifest {
+  cancel(runId: string, projectRoot?: string): RunManifest {
     const run = this.activeRuns.get(runId);
-    if (!run) throw new Error("运行不在执行中");
+    if (!run || run.paths.root !== ensureProject(projectRoot).root) throw new Error("运行不在执行中");
     run.controller.abort(new Error("用户取消"));
     return run.manifest;
   }
@@ -296,13 +312,10 @@ export class Orchestrator {
     run.store.writeManifest(run.manifest);
     this.emit(run, "run_started", { data: { selectedAgents: run.manifest.selectedAgents } });
 
-    const projectConfig = parseYaml(readFileSync(run.paths.config, "utf8")) as {
-      concurrency?: { global?: number; perProvider?: number };
-    };
-    const globalSemaphore = new Semaphore(projectConfig.concurrency?.global || 6);
+    const globalSemaphore = new Semaphore(run.concurrency.global);
     const perProvider = new Map<ProviderId, Semaphore>();
     for (const provider of ["openai", "anthropic", "deepseek", "openrouter"] as ProviderId[]) {
-      perProvider.set(provider, new Semaphore(projectConfig.concurrency?.perProvider || 2));
+      perProvider.set(provider, new Semaphore(run.concurrency.perProvider));
     }
 
     await Promise.all(agents.map((agent) => globalSemaphore.use(() =>
@@ -398,7 +411,7 @@ export class Orchestrator {
       ...partial,
     };
     run.store.appendEvent(event);
-    for (const listener of this.listeners.get(run.manifest.id) || []) listener(event);
+    for (const listener of this.listeners.get(run.manifest.id) || []) listener(redactSecrets(event));
   }
 
   private emitForManifest(
@@ -415,6 +428,6 @@ export class Orchestrator {
       ...partial,
     };
     store.appendEvent(event);
-    for (const listener of this.listeners.get(manifest.id) || []) listener(event);
+    for (const listener of this.listeners.get(manifest.id) || []) listener(redactSecrets(event));
   }
 }
