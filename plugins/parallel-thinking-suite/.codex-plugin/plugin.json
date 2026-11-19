@@ -1,6 +1,6 @@
 {
   "name": "parallel-thinking-suite",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "在 Codex 中并行调用多个可配置 Agent，并实时聚合它们的独立判断。",
   "author": {
     "name": "Local developer"
